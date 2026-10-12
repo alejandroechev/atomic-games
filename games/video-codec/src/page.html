@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside the Encoder — an atomic game about modern video codecs</title>
+<meta name="description" content="A playable, honest toy video encoder. Learn what H.264, HEVC and AV1 actually decide, by making those decisions yourself under a bit budget.">
+<style>
+:root{
+  --bg:#fffff8; --panel:#fff; --ink:#1b1b17; --muted:#6a6a5e; --rule:#dcdccd;
+  /* semantic colour — one colour, one concept, everywhere on the page */
+  --lever:#2f6f9f;      /* something you control */
+  --bits:#b4541e;       /* bits spent */
+  --mv:#7a4fa3;         /* motion / side information */
+  --quality:#2f7a52;    /* distortion & quality */
+  --bad:#a8322c;        /* failure */
+  --ghost:#9a9a8c;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);
+     font:16px/1.6 ui-serif,Georgia,'Times New Roman',serif;-webkit-text-size-adjust:100%}
+main{max-width:60rem;margin:0 auto;padding:2.5rem 1.1rem 6rem}
+h1{font-size:2.05rem;line-height:1.15;margin:0 0 .5rem;letter-spacing:-.01em}
+h2{font-size:1.3rem;margin:0 0 .35rem}
+h3{font-size:1.02rem;margin:1.4rem 0 .3rem;font-family:ui-sans-serif,system-ui,sans-serif}
+p{margin:.6rem 0}
+a{color:var(--lever)}
+.lede{font-size:1.1rem;color:#44443c}
+.kicker{font:600 11px/1.4 ui-sans-serif,system-ui,sans-serif;letter-spacing:.14em;
+        text-transform:uppercase;color:var(--muted);margin:0 0 .2rem}
+.sans{font-family:ui-sans-serif,system-ui,sans-serif}
+small,.small{font-size:13px}
+hr{border:0;border-top:1px solid var(--rule);margin:2.5rem 0}
+.level{border:1px solid var(--rule);border-radius:12px;background:var(--panel);
+       padding:1.1rem 1.2rem 1.3rem;margin:1.5rem 0;box-shadow:0 1px 0 rgba(0,0,0,.02)}
+.level[data-locked="1"]{opacity:.55}
+.goal{border-left:3px solid var(--lever);background:#f6faff;padding:.5rem .75rem;
+      margin:.8rem 0;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px}
+.tax{border-left:3px solid var(--bad);background:#fdf6f5;padding:.5rem .75rem;
+     margin:.8rem 0;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px}
+.figs{display:flex;flex-wrap:wrap;gap:.9rem;margin:.9rem 0 .2rem}
+figure{margin:0}
+figcaption{font:12px/1.35 ui-sans-serif,system-ui,sans-serif;color:var(--muted);
+           margin-top:.25rem;max-width:21rem}
+canvas{display:block;image-rendering:pixelated;border:1px solid var(--rule);
+       border-radius:4px;background:#111;width:320px;height:192px}
+canvas.sm{width:160px;height:96px}
+canvas.blk{width:104px;height:104px}
+canvas.wide{width:100%;max-width:660px;height:auto;aspect-ratio:160/96}
+svg.fig{display:block;border:1px solid var(--rule);border-radius:6px;background:#fcfcf4;
+        width:100%;height:auto}
+.controls{display:flex;flex-wrap:wrap;gap:1.1rem;align-items:flex-end;margin-top:1rem;
+          padding-top:.9rem;border-top:1px dashed var(--rule)}
+.ctl{display:flex;flex-direction:column;gap:.22rem;
+     font:13px/1.3 ui-sans-serif,system-ui,sans-serif;min-width:9rem}
+.ctl label{color:var(--muted);font-weight:600;letter-spacing:.01em}
+.ctl .val{color:var(--lever);font-weight:700;font-variant-numeric:tabular-nums}
+input[type=range]{width:13rem;accent-color:var(--lever)}
+select,button{font:13px ui-sans-serif,system-ui,sans-serif;padding:.42rem .7rem;
+              border:1px solid #c3c3b2;border-radius:6px;background:#fff;color:var(--ink);cursor:pointer}
+button.primary{background:var(--lever);border-color:var(--lever);color:#fff;font-weight:600}
+button:disabled{opacity:.4;cursor:not-allowed}
+.readouts{display:flex;flex-wrap:wrap;gap:1.4rem;margin:.9rem 0 0;
+          font:13px/1.4 ui-sans-serif,system-ui,sans-serif}
+.ro{min-width:7rem}
+.ro b{display:block;font-size:1.25rem;font-variant-numeric:tabular-nums;font-weight:700}
+.ro span{color:var(--muted)}
+.ro.bits b{color:var(--bits)} .ro.q b{color:var(--quality)} .ro.mv b{color:var(--mv)}
+.ro.fail b{color:var(--bad)}
+.msg{font:13px/1.5 ui-sans-serif,system-ui,sans-serif;margin-top:.8rem;min-height:1.2em}
+.msg.ok{color:var(--quality);font-weight:600}
+.msg.no{color:var(--bad);font-weight:600}
+.predict{border:1px dashed var(--lever);border-radius:8px;padding:.7rem .85rem;margin:.9rem 0;
+         background:#f7fbff;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px}
+.predict .q{font-weight:700;margin-bottom:.4rem}
+.predict .opts{display:flex;flex-wrap:wrap;gap:.45rem;margin:.4rem 0}
+.predict button{background:#fff}
+.predict button[aria-pressed=true]{background:var(--lever);color:#fff;border-color:var(--lever)}
+.verdict{margin-top:.5rem}
+.scaffold{font:11px/1.4 ui-sans-serif,system-ui,sans-serif;letter-spacing:.1em;
+          text-transform:uppercase;color:#fff;background:var(--muted);
+          border-radius:99px;padding:.15rem .55rem;display:inline-block;vertical-align:2px}
+.scaffold[data-s=present]{background:#4c8c5f}
+.scaffold[data-s=degraded]{background:#b58a2b}
+.scaffold[data-s=absent]{background:#8c4c4c}
+.scaffold[data-s=inverted]{background:#5b4c8c}
+table{border-collapse:collapse;width:100%;font:13px/1.45 ui-sans-serif,system-ui,sans-serif;margin:.8rem 0}
+th,td{border-bottom:1px solid var(--rule);padding:.35rem .5rem;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f2f2e6;
+     padding:.05rem .3rem;border-radius:3px}
+ol,ul{padding-left:1.25rem}
+li{margin:.3rem 0}
+noscript .warn{border:1px solid var(--bad);background:#fdf6f5;padding:.8rem;border-radius:8px}
+.legend{display:flex;flex-wrap:wrap;gap:.9rem;font:12px ui-sans-serif,system-ui,sans-serif;
+        color:var(--muted);margin:.5rem 0}
+.legend i{display:inline-block;width:.7rem;height:.7rem;border-radius:2px;margin-right:.3rem;vertical-align:-1px}
+.foot{color:var(--muted);font-size:13px;margin-top:3rem}
+@media (max-width:700px){canvas{width:100%;height:auto}canvas.blk{width:84px;height:84px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<main>
+
+<p class="kicker">An atomic game · built with the generalized Atomic Intrinsic Integration method</p>
+<h1>Inside the Encoder</h1>
+<p class="lede">Modern video codecs do not “compress frames”. They spend a budget.
+Every single decision inside H.264, HEVC, AV1 and VVC is the same comparison —
+<em>is this picture improvement worth what it costs in bits?</em> — made a few
+million times a second. This game makes you make those decisions, under a budget,
+against a real encoder running in this page.</p>
+
+<noscript><p class="warn"><strong>JavaScript is off, so the levers are missing.</strong>
+Everything below still explains how a block-based video encoder works; you just
+cannot play it.</p></noscript>
+
+<h2>The sentence most people get wrong</h2>
+<p><strong>“Higher bitrate means better quality, and the codec decides how good
+it looks.”</strong> Both halves are wrong in an interesting way. Quality per bit
+is set almost entirely by <em>decisions the encoder makes</em> — which parts of
+the picture to predict, from where, at what block size, and how much precision to
+destroy — and the video standard does not specify a single one of them. A
+standard defines only what a <em>decoder</em> must do with a bitstream. Two
+encoders claiming the same standard, at the same bitrate, can differ by an
+enormous visible margin, because one of them searched harder.</p>
+
+<h2>What is actually in this page</h2>
+<p>Not an animation of a codec. A codec. These levels run a real, small,
+block-based hybrid encoder written in the page: a separable 8×8 DCT, a deadzone
+quantizer on H.264's logarithmic step ladder, an Exp-Golomb run/level entropy
+coder from the CAVLC family, intra prediction from reconstructed neighbours,
+rate-constrained full-search motion compensation from reconstructed references,
+and a rate–distortion mode decision. Every number you will see — every bit count,
+every decibel — was produced by actually doing the work. Nothing is a stand-in
+formula tuned to make the graph move.</p>
+
+<p>That matters here more than it usually does, because you are about to
+calibrate your intuition on these readouts.</p>
+
+<h3>The five things every block-based codec does</h3>
+<table>
+<tr><th>Step</th><th>What it does</th><th>Why it exists</th></tr>
+<tr><td><strong>Predict</strong></td><td>Guess the block from pixels already decoded — neighbours in this frame (<em>intra</em>) or a patch of an earlier frame (<em>inter</em>)</td><td>Most of a picture is a repeat of something already sent</td></tr>
+<tr><td><strong>Subtract</strong></td><td>Keep only the <em>residual</em>: the part the guess got wrong</td><td>You only have to transmit your surprise</td></tr>
+<tr><td><strong>Transform</strong></td><td>8×8 DCT on the residual</td><td>Concentrates the energy into a few coefficients</td></tr>
+<tr><td><strong>Quantize</strong></td><td>Divide by a step and round; small coefficients become exactly zero</td><td>The <em>only</em> lossy step, and the one that creates the compression</td></tr>
+<tr><td><strong>Entropy code</strong></td><td>Short codes for common values, long ones for rare</td><td>Lossless packing of what is left</td></tr>
+</table>
+
+<p>The decoder runs steps 5→1 backwards and is nearly brainless: it has no
+choices to make. All the intelligence, and all the variation between products,
+lives in the encoder's search. One consequence shapes everything else in this
+game: the encoder must predict from the <em>decoded</em> picture, not the
+original, because that is all the decoder will have. Any error it leaves behind
+is inherited by every frame that follows.</p>
+
+<h3>How to play</h3>
+<p>Seven levels, each introducing exactly one new decision. Each level states its
+goal and what it costs you to be wrong — a bit budget, a limited number of
+commits, or an irreversible choice. The tag at the top of each level tells you
+how much help you are getting:</p>
+<p class="small">
+<span class="scaffold" data-s="present">scaffold present</span> every readout is live while you move the lever ·
+<span class="scaffold" data-s="degraded">scaffold degraded</span> readouts only after you commit ·
+<span class="scaffold" data-s="inverted">scaffold inverted</span> you must predict the result before you see it ·
+<span class="scaffold" data-s="absent">scaffold absent</span> you are on your own
+</p>
+<p>The help is removed on purpose and in that order. With the readouts permanently
+on, you can beat every level by trial and error and learn nothing — which is
+exactly the failure this game's design method was written to prevent. The last
+level gives you no readouts at all until the frame is already sent.</p>
+
+<hr>
+
+<!-- ======================= LEVEL 1 ======================= -->
+<section class="level" id="l1" aria-labelledby="l1h">
+  <p class="kicker">Level 1 of 7 · new decision: <span style="color:var(--lever)">how much precision to destroy</span>
+     <span class="scaffold" data-s="present">scaffold present</span></p>
+  <h2 id="l1h">The quantizer — where the loss happens</h2>
+  <p>One frame, no prediction at all: just transform, quantize, count bits. The
+  quantizer divides every DCT coefficient by a step and rounds. Anything smaller
+  than two-thirds of a step becomes <em>exactly zero</em> and costs almost
+  nothing to send. QP sets that step, and the step <strong>doubles every six
+  QP</strong> — so QP is a logarithmic dial, which is why the quality curve has a
+  cliff in it.</p>
+
+  <div class="predict" id="l1-predict">
+    <div class="q">Before you touch anything. Moving from QP&nbsp;24 to QP&nbsp;36 roughly halves the file. What does that cost in quality?</div>
+    <div class="opts" role="group" aria-label="Prediction options for level 1">
+      <button data-v="a" aria-pressed="false">About 1 dB — barely anything</button>
+      <button data-v="b" aria-pressed="false">About 10 dB — clearly visible</button>
+      <button data-v="c" aria-pressed="false">About 25 dB — destroyed</button>
+    </div>
+    <p class="verdict small" id="l1-verdict"></p>
+  </div>
+
+  <div class="figs">
+    <figure><canvas id="l1-src" width="160" height="96" aria-label="The original frame"></canvas>
+      <figcaption>Original frame</figcaption></figure>
+    <figure><canvas id="l1-rec" width="160" height="96" aria-label="The decoded frame at the current QP"></canvas>
+      <figcaption>What the decoder gets back</figcaption></figure>
+  </div>
+  <div class="figs">
+    <figure><canvas id="l1-err" width="160" height="96" class="sm" aria-label="Error heat map"></canvas>
+      <figcaption>Error heat map — where the quality went. Detail dies first; flat sky survives.</figcaption></figure>
+    <figure><canvas id="l1-coef" width="80" height="80" class="blk" aria-label="Quantized coefficients of one block"></canvas>
+      <figcaption>One 8×8 block's coefficients. Dark cells were zeroed; top-left is the block's average brightness.</figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l1-qp">Quantization parameter (QP)</label>
+      <input type="range" id="l1-qp" min="18" max="46" step="1" value="26">
+      <span class="val">QP <span id="l1-qp-val">26</span> · step <span id="l1-step">—</span></span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l1-commit">Commit</label>
+      <button id="l1-commit" class="primary">Send this frame</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro bits"><b id="l1-bits">—</b><span>bits for the frame</span></div>
+    <div class="ro q"><b id="l1-psnr">—</b><span>dB quality (PSNR)</span></div>
+    <div class="ro"><b id="l1-zero">—</b><span>coefficients zeroed</span></div>
+    <div class="ro"><b id="l1-tries">3</b><span>commits left</span></div>
+  </div>
+
+  <div class="goal"><strong>Goal.</strong> Send this frame in <strong>7,000 bits or fewer</strong>
+    while keeping quality at <strong>33.5 dB or better</strong>.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Three commits. Run out
+    and the level is lost — restart it and try again with what you learned.</div>
+  <p class="msg" id="l1-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 2 ======================= -->
+<section class="level" id="l2" aria-labelledby="l2h">
+  <p class="kicker">Level 2 of 7 · new decision: <span style="color:var(--lever)">what to throw the precision away from</span>
+     <span class="scaffold" data-s="inverted">scaffold inverted</span></p>
+  <h2 id="l2h">The transform — why the DCT comes first</h2>
+  <p>Quantizing is just rounding. You could round the pixels directly and skip the
+  transform entirely. Both paths below use the <em>same</em> quantizer and the
+  <em>same</em> entropy coder, and the page searches for a step size that makes
+  them spend the <strong>same number of bits</strong>. Only one thing differs:
+  whether the rounding happens on pixels or on DCT coefficients.</p>
+
+  <div class="predict" id="l2-predict">
+    <div class="q">Same bits, same coder, same quantizer. How big is the gap?</div>
+    <div class="opts" role="group" aria-label="Prediction options for level 2">
+      <button data-v="a" aria-pressed="false">A wash — the transform is bookkeeping</button>
+      <button data-v="b" aria-pressed="false">The DCT wins by a few dB</button>
+      <button data-v="c" aria-pressed="false">The DCT wins by around 20 dB</button>
+    </div>
+    <p class="verdict small" id="l2-verdict"></p>
+  </div>
+
+  <div class="figs">
+    <figure><canvas id="l2-dct" width="160" height="96" aria-label="Reconstruction with the DCT"></canvas>
+      <figcaption>Rounding the <strong>DCT coefficients</strong> — <span id="l2-dct-r">—</span></figcaption></figure>
+    <figure><canvas id="l2-px" width="160" height="96" aria-label="Reconstruction without the DCT"></canvas>
+      <figcaption>Rounding the <strong>pixels</strong> — <span id="l2-px-r">—</span></figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l2-budget">Bit budget for the frame</label>
+      <input type="range" id="l2-budget" min="8500" max="16000" step="500" value="10000" disabled>
+      <span class="val"><span id="l2-budget-val">10000</span> bits</span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l2-run">Reveal</label>
+      <button id="l2-run" class="primary" disabled>Lock in my guess and run both</button>
+    </div>
+  </div>
+  <p class="msg" id="l2-msg">Commit a prediction first — the answer is hidden until you do.</p>
+  <p class="small">A natural picture is mostly smooth, so in the DCT domain nearly
+  all its energy lands in a handful of low-frequency coefficients and the rest is
+  near zero — free to send. In the pixel domain every one of the 64 values is
+  equally important, so an equal budget buys you 64 coarse numbers instead of 6
+  good ones. This is <em>energy compaction</em>, and it is the whole reason a
+  transform is in the pipeline.</p>
+</section>
+
+<!-- ======================= LEVEL 3 ======================= -->
+<section class="level" id="l3" aria-labelledby="l3h">
+  <p class="kicker">Level 3 of 7 · new decision: <span style="color:var(--lever)">what to predict from</span>
+     <span class="scaffold" data-s="present">scaffold present</span></p>
+  <h2 id="l3h">Prediction — send the surprise, not the picture</h2>
+  <p>So far every block has been coded from scratch. Real codecs almost never do
+  that. They guess the block first — from the decoded pixels directly above and
+  left of it, or from the same place in the previous frame — and then transmit
+  only the <em>residual</em>: guess minus truth. A good guess makes the residual
+  nearly flat, and a flat residual quantizes to almost nothing.</p>
+  <p>Five blocks are marked on the frame. They do not all want the same guess:
+  one sits on a smooth gradient, one on a hard vertical edge, one on a moving
+  object. <strong>Pick a mode for each.</strong></p>
+
+  <div class="figs">
+    <figure><canvas id="l3-frame" width="160" height="96" aria-label="Frame with the five target blocks marked"></canvas>
+      <figcaption>Click a marked block to work on it. Green = already committed.</figcaption></figure>
+    <figure><canvas id="l3-prev" width="160" height="96" class="sm" aria-label="The previous decoded frame"></canvas>
+      <figcaption>The previous <em>decoded</em> frame — all the encoder may predict from.</figcaption></figure>
+  </div>
+  <div class="figs">
+    <figure><canvas id="l3-b-src" width="8" height="8" class="blk" aria-label="Source block"></canvas><figcaption>Truth</figcaption></figure>
+    <figure><canvas id="l3-b-pred" width="8" height="8" class="blk" aria-label="Prediction"></canvas><figcaption>The guess</figcaption></figure>
+    <figure><canvas id="l3-b-res" width="8" height="8" class="blk" aria-label="Residual"></canvas><figcaption>Residual — <strong>flat grey is free</strong></figcaption></figure>
+    <figure><canvas id="l3-b-rec" width="8" height="8" class="blk" aria-label="Reconstruction"></canvas><figcaption>What comes back</figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l3-block">Block</label>
+      <select id="l3-block"></select>
+    </div>
+    <div class="ctl">
+      <label for="l3-mode">Prediction mode</label>
+      <select id="l3-mode">
+        <option value="none">None — code it from scratch</option>
+        <option value="dc">Intra DC — flat average of the neighbours</option>
+        <option value="v">Intra vertical — copy the row above downwards</option>
+        <option value="h">Intra horizontal — copy the column left across</option>
+        <option value="inter">Inter — same place in the previous frame</option>
+      </select>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l3-commit">Commit</label>
+      <button id="l3-commit" class="primary">Commit this block</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro bits"><b id="l3-bits">—</b><span>bits for this block</span></div>
+    <div class="ro q"><b id="l3-err">—</b><span>residual energy left</span></div>
+    <div class="ro bits"><b id="l3-total">0</b><span>bits spent of 330</span></div>
+    <div class="ro"><b id="l3-done">0/5</b><span>blocks committed</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Commit all five blocks for <strong>330 bits or fewer</strong> in total. Coding all five from scratch costs over 400 — there is no lazy way through.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> A committed block is
+    final — you cannot go back and recode it, exactly as a real encoder cannot.
+    Overspend and the level is lost.</div>
+  <p class="msg" id="l3-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 4 ======================= -->
+<section class="level" id="l4" aria-labelledby="l4h">
+  <p class="kicker">Level 4 of 7 · new decision: <span style="color:var(--lever)">where in the past frame to look</span>
+     <span class="scaffold" data-s="present">scaffold present</span></p>
+  <h2 id="l4h">Motion — the surprise is somewhere else</h2>
+  <p>The camera is panning and three objects are moving. Predicting a block from
+  the <em>same place</em> in the previous frame is then a bad guess, but predicting
+  it from the place that content <em>came from</em> is an excellent one. That
+  offset is a <strong>motion vector</strong>, and the encoder must transmit it.</p>
+  <p>Drag the two sliders until the residual goes flat grey. Watch both bars: the
+  orange residual bar falls as your aim improves, and the purple motion bar grows
+  as the vector gets further from zero. <strong>The vector is not free.</strong></p>
+
+  <div class="figs">
+    <figure><canvas id="l4-frame" width="160" height="96" aria-label="Current frame with the target block marked"></canvas>
+      <figcaption>Current frame. The marked block is the one you are coding.</figcaption></figure>
+    <figure><canvas id="l4-ref" width="160" height="96" aria-label="Reference frame with the search position marked"></canvas>
+      <figcaption>Previous decoded frame. The box is where your vector is pointing.</figcaption></figure>
+  </div>
+  <div class="figs">
+    <figure><canvas id="l4-b-src" width="8" height="8" class="blk" aria-label="Source block"></canvas><figcaption>Truth</figcaption></figure>
+    <figure><canvas id="l4-b-pred" width="8" height="8" class="blk" aria-label="Motion-compensated prediction"></canvas><figcaption>Fetched from the past</figcaption></figure>
+    <figure><canvas id="l4-b-res" width="8" height="8" class="blk" aria-label="Residual"></canvas><figcaption>Residual</figcaption></figure>
+    <figure>
+      <svg class="fig" id="l4-bar" viewBox="0 0 200 104" role="img" aria-labelledby="l4-bar-title" style="width:200px">
+        <title id="l4-bar-title">Stacked cost of this block: residual bits plus motion vector bits.</title>
+        <g id="l4-bar-layer"></g>
+      </svg>
+      <figcaption>Total cost = residual + motion vector.</figcaption>
+    </figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l4-block">Block</label>
+      <select id="l4-block"></select>
+    </div>
+    <div class="ctl">
+      <label for="l4-mvx">Motion vector — horizontal</label>
+      <input type="range" id="l4-mvx" min="-8" max="8" step="1" value="0">
+      <span class="val"><span id="l4-mvx-val">0</span> px</span>
+    </div>
+    <div class="ctl">
+      <label for="l4-mvy">Motion vector — vertical</label>
+      <input type="range" id="l4-mvy" min="-8" max="8" step="1" value="0">
+      <span class="val"><span id="l4-mvy-val">0</span> px</span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l4-commit">Commit</label>
+      <button id="l4-commit" class="primary">Commit this vector</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro"><b id="l4-sad">—</b><span>prediction error (SAD)</span></div>
+    <div class="ro bits"><b id="l4-rbits">—</b><span>residual bits</span></div>
+    <div class="ro mv"><b id="l4-mbits">—</b><span>vector bits</span></div>
+    <div class="ro bits"><b id="l4-total">0</b><span>bits spent of 230</span></div>
+    <div class="ro"><b id="l4-done">0/4</b><span>blocks committed</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Code all four blocks for <strong>230 bits or fewer</strong>.
+    Standing still on all four costs over 600. One of the four is already predicted perfectly
+    without moving — find out what a vector is <em>worth</em> there.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Commits are final.</div>
+  <p class="msg" id="l4-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 5 ======================= -->
+<section class="level" id="l5" aria-labelledby="l5h">
+  <p class="kicker">Level 5 of 7 · new decision: <span style="color:var(--lever)">how finely to carve the picture</span>
+     <span class="scaffold" data-s="degraded">scaffold degraded</span></p>
+  <h2 id="l5h">Partitioning — where one vector is not enough</h2>
+  <p>Up to now every block had one vector. Real pictures are not that tidy: a
+  16×16 macroblock lying across the edge of a moving object contains two different
+  motions, and no single vector describes both. So the encoder may <strong>split
+  it into four 8×8 partitions</strong>, each with its own vector — four times the
+  accuracy, four times the vectors to transmit.</p>
+  <p>Sixty macroblocks. Click the ones you think need splitting. <strong>Your live
+  readouts are gone:</strong> you get the totals only after you press Encode, so
+  you have to reason about where the motion disagrees instead of watching a number.</p>
+
+  <div class="figs">
+    <figure>
+      <canvas id="l5-frame" width="160" height="96" class="wide" aria-label="Frame divided into macroblocks; click to split"></canvas>
+      <figcaption>Click a macroblock to split it (shown divided into four). Click again to merge.</figcaption>
+    </figure>
+  </div>
+  <div class="legend">
+    <span><i style="background:#2f6f9f"></i>you split this one</span>
+    <span><i style="background:#9a9a8c"></i>the encoder's own choice, revealed after you commit</span>
+  </div>
+
+  <div class="controls">
+    <div class="ctl" style="min-width:auto">
+      <label for="l5-none">Reset</label>
+      <button id="l5-none">Split nothing</button>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l5-all">Fill</label>
+      <button id="l5-all">Split everything</button>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l5-run">Encode</label>
+      <button id="l5-run" class="primary">Encode the frame</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro bits"><b id="l5-bits">—</b><span>total bits</span></div>
+    <div class="ro mv"><b id="l5-mv">—</b><span>of those, vector bits</span></div>
+    <div class="ro q"><b id="l5-psnr">—</b><span>dB quality</span></div>
+    <div class="ro"><b id="l5-split">0</b><span>macroblocks split</span></div>
+    <div class="ro"><b id="l5-tries">3</b><span>encodes left</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Beat <strong>split-nothing</strong> on
+    bits <em>and</em> on quality at the same time. Splitting everything will not do it.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Three encodes. Each one
+    burns a try whether it helps or not.</div>
+  <p class="msg" id="l5-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 6 ======================= -->
+<section class="level" id="l6" aria-labelledby="l6h">
+  <p class="kicker">Level 6 of 7 · new decision: <span style="color:var(--lever)">the price of a bit</span>
+     <span class="scaffold" data-s="inverted">scaffold inverted</span></p>
+  <h2 id="l6h">J = D + λR — the one rule under all of it</h2>
+  <p>Quantizer, prediction mode, vector, partition: four separate levers, and you
+  have been choosing each by feel. An encoder does not. It scores every candidate
+  with one number —</p>
+  <p style="text-align:center;font-size:1.15rem"><code>J = D + λ·R</code> &nbsp;
+    <span class="small">distortion, plus λ times the bits</span></p>
+  <p>— and keeps the lowest. <strong>λ is the exchange rate between squared error
+  and bits.</strong> Raise it and bits get expensive, so the encoder starts
+  refusing to pay for detail and falls back on cheaper modes. Lower it and it will
+  buy anything. Changing λ does not change the quantizer at all; it changes what
+  the encoder is <em>willing to spend</em>.</p>
+
+  <div class="predict" id="l6-predict">
+    <div class="q">At a fixed QP, you multiply the price of a bit by twenty. Which mode takes over the frame?</div>
+    <div class="opts" role="group" aria-label="Prediction options for level 6">
+      <button data-v="a" aria-pressed="false">Intra — stop trusting the past</button>
+      <button data-v="b" aria-pressed="false">Split 8×8 — be more accurate</button>
+      <button data-v="c" aria-pressed="false">Skip — send nothing at all</button>
+    </div>
+    <p class="verdict small" id="l6-verdict"></p>
+  </div>
+
+  <div class="figs">
+    <figure>
+      <svg class="fig" id="l6-rd" viewBox="0 0 420 260" role="img" aria-labelledby="l6-rd-title" style="max-width:460px">
+        <title id="l6-rd-title">Rate-distortion plane: bits spent against quality obtained, with your committed operating points.</title>
+        <g id="l6-rd-layer"></g>
+      </svg>
+      <figcaption>Every encode you commit lands here. The green box is the target.
+        Up is better, left is cheaper — you want the top-left.</figcaption>
+    </figure>
+    <figure><canvas id="l6-rec" width="160" height="96" aria-label="The encoded frame, shown after committing"></canvas>
+      <figcaption>Shown only after you commit — <span id="l6-cap">not yet encoded</span></figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l6-qp">Quantizer (QP) — how much precision to destroy</label>
+      <input type="range" id="l6-qp" min="22" max="40" step="1" value="30">
+      <span class="val">QP <span id="l6-qp-val">30</span></span>
+    </div>
+    <div class="ctl">
+      <label for="l6-lam">λ — the price of a bit</label>
+      <input type="range" id="l6-lam" min="-10" max="26" step="1" value="0">
+      <span class="val">×<span id="l6-lam-val">1.00</span> of the textbook value</span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l6-run">Commit</label>
+      <button id="l6-run" class="primary">Encode and plot</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro bits"><b id="l6-bits">—</b><span>bits</span></div>
+    <div class="ro q"><b id="l6-psnr">—</b><span>dB</span></div>
+    <div class="ro"><b id="l6-modes">—</b><span>mode mix</span></div>
+    <div class="ro"><b id="l6-tries">5</b><span>encodes left</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Land a point inside the green box:
+    <strong>2,800 bits or fewer</strong> at <strong>38.0 dB or better</strong>.
+    Your starting point misses it by about 400 bits, and no amount of λ alone will ever
+    reach it — λ is not a quality dial.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Five encodes, and the
+    picture stays hidden until each one is spent.</div>
+  <p class="msg" id="l6-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 7 ======================= -->
+<section class="level" id="l7" aria-labelledby="l7h">
+  <p class="kicker">Level 7 of 7 · everything at once
+     <span class="scaffold" data-s="absent">scaffold absent</span></p>
+  <h2 id="l7h">Ship the shot — rate control, frame types, and a channel that will not wait</h2>
+  <p>Twenty-four frames, going out over a link that delivers a fixed
+  <strong>3,200 bits per frame interval</strong> and no more. The decoder plays
+  from a buffer. Spend more than arrives and the buffer drains; empty it and
+  playback <strong>stalls</strong> — the failure every real rate controller exists
+  to prevent.</p>
+  <p>You choose, one frame at a time and with no take-backs:</p>
+  <ul>
+    <li><strong>I</strong> — code it from scratch. Expensive, but it owes nothing to the past and lets a viewer join here.</li>
+    <li><strong>P</strong> — predict from the previous decoded frame. Usually several times cheaper.</li>
+    <li><strong>B</strong> — predict from the previous <em>and</em> the next frame, averaged. Cheaper still, but the encoder must code the future frame first, so it commits two frames at once and adds a frame of <strong>delay</strong>. You have three frames of delay for the whole shot and no more.</li>
+    <li><strong>QP</strong> — the quantizer, as in level 1.</li>
+  </ul>
+  <p>No live readouts. You find out what a frame cost after it is sent. Somewhere
+  in this shot the camera cuts to a different scene; you will not be told when.</p>
+
+  <div class="predict" id="l7-predict">
+    <div class="q">Before each frame: how expensive will it be?</div>
+    <div class="opts" role="group" aria-label="Per-frame prediction">
+      <button data-v="cheap" aria-pressed="false">Cheap — under 2,500 bits</button>
+      <button data-v="mid" aria-pressed="false">Normal — 2,500 to 6,000</button>
+      <button data-v="dear" aria-pressed="false">Expensive — over 6,000</button>
+    </div>
+    <p class="verdict small" id="l7-verdict">A correct call earns you 600 bits of buffer. A wrong one costs nothing but the information.</p>
+  </div>
+
+  <div class="figs">
+    <figure>
+      <svg class="fig" id="l7-timeline" viewBox="0 0 660 190" role="img" aria-labelledby="l7-tl-title">
+        <title id="l7-tl-title">Per-frame bit cost and the decoder buffer level across the shot.</title>
+        <g id="l7-tl-layer"></g>
+      </svg>
+      <figcaption>Orange bars: bits spent per frame. Green line: buffer level — if it
+        touches the floor, playback stalls.</figcaption>
+    </figure>
+  </div>
+  <div class="figs">
+    <figure><canvas id="l7-src" width="160" height="96" class="sm" aria-label="The frame about to be coded"></canvas>
+      <figcaption>Frame <span id="l7-t">0</span> — what you are about to send</figcaption></figure>
+    <figure><canvas id="l7-rec" width="160" height="96" class="sm" aria-label="The last decoded frame"></canvas>
+      <figcaption>Last decoded frame — what the viewer actually saw</figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l7-type">Frame type</label>
+      <select id="l7-type">
+        <option value="P">P — predict from the past</option>
+        <option value="I">I — code from scratch</option>
+        <option value="B">B — predict from both sides (costs 1 delay)</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="l7-qp">Quantizer (QP)</label>
+      <input type="range" id="l7-qp" min="22" max="42" step="1" value="30">
+      <span class="val">QP <span id="l7-qp-val">30</span></span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l7-send">Send</label>
+      <button id="l7-send" class="primary">Send frame</button>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l7-restart">Restart</label>
+      <button id="l7-restart">Restart the shot</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro"><b id="l7-buf">10,000</b><span>buffer (stall at 0)</span></div>
+    <div class="ro bits"><b id="l7-last">—</b><span>last frame cost</span></div>
+    <div class="ro q"><b id="l7-lastq">—</b><span>dB of that frame</span></div>
+    <div class="ro fail"><b id="l7-strikes">0/2</b><span>frames below 34 dB</span></div>
+    <div class="ro"><b id="l7-delay">3</b><span>delay budget left</span></div>
+    <div class="ro q"><b id="l7-avg">—</b><span>average dB so far (need 36.6)</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Get all 24 frames out with the buffer never
+    reaching zero, no more than two frames below 34 dB, and an <strong>average of 36.6 dB
+    or better</strong> across the shot. There is no separate bit cap — the channel is the
+    budget. Note what that implies: a quantizer setting that is right for the easy frames is
+    wrong for the hard ones, and finding that out frame by frame is the entire job of a rate
+    controller.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Everything is final.
+    A frame coded badly is also the reference the next frame predicts from, so its
+    error is inherited — the bits you save now are borrowed, not earned. Empty the
+    buffer and the run is over.</div>
+  <p class="msg" id="l7-msg"></p>
+</section>
+
+<hr>
+
+<!-- ======================= DEBRIEF ======================= -->
+<section class="level" id="debrief" aria-labelledby="dbh">
+  <p class="kicker">Debrief</p>
+  <h2 id="dbh">What you now know, and what killed the thing you believed</h2>
+
+  <table>
+    <tr><th style="width:34%">What people believe</th><th>What actually happened</th></tr>
+    <tr><td><strong>More bitrate means better quality.</strong></td>
+        <td>Only along one encoder's curve. In level 2 two encodes spent identical bits and differed by about twenty decibels, because one of them transformed first. The bitrate is an input; <em>quality per bit</em> is the output of a search.</td></tr>
+    <tr><td><strong>The codec decides how good it looks.</strong></td>
+        <td>The standard defines only the decoder. Every choice you made in levels 3–6 — mode, vector, partition, λ — is unspecified by H.264, HEVC or AV1 and is where encoders actually differ. This is why two “H.264 1080p 5&nbsp;Mbps” files can look nothing alike, and why a slower preset looks better at the same bitrate: it searches more of exactly these decisions.</td></tr>
+    <tr><td><strong>Each frame is a picture.</strong></td>
+        <td>Most frames are corrections. A P frame here costs roughly a third of an I frame, and the great majority of its macroblocks ended up as <em>Skip</em> — literally “the previous frame, shifted; I have nothing to add”.</td></tr>
+    <tr><td><strong>Motion vectors are free.</strong></td>
+        <td>Level 4's flat-sky block: a perfect vector reduced the residual by almost nothing and the vector itself cost more than it saved. This is why encoders minimise <em>SAD + λ·(vector bits)</em> rather than SAD, and why a “more accurate” motion search can make a file bigger.</td></tr>
+    <tr><td><strong>Smaller blocks are more accurate, so split more.</strong></td>
+        <td>Splitting everything in level 5 cost more bits <em>and</em> barely moved quality, because four vectors describing one single motion is three wasted vectors. Splitting pays only where motion genuinely disagrees inside a block — object boundaries. Every partition choice is side information someone has to transmit.</td></tr>
+    <tr><td><strong>Lower the quantizer to make the file smaller.</strong></td>
+        <td>That is one of two dials and it is the blunt one. λ changes what the encoder is willing to buy without changing precision at all. In level 6 neither dial alone reached the target box.</td></tr>
+    <tr><td><strong>Saving bits on a frame is free if it looks acceptable.</strong></td>
+        <td>It is a loan. Every later P frame predicts from your decoded output, so its error propagates until the next I frame pays it off — which you felt directly as drift in level 7.</td></tr>
+  </table>
+
+  <h3>The transferable rules</h3>
+  <ol>
+    <li><strong>Every decision is <code>J = D + λR</code>.</strong> Mode, vector,
+      partition, quantizer, frame type — all of it is one comparison, repeated
+      millions of times a second. If you only remember one thing, remember that an
+      encoder is a search algorithm with a price list.</li>
+    <li><strong>Transmit surprise, never content.</strong> Predict as well as you
+      can, then send only the error. Everything else in the pipeline exists to
+      make the error cheap.</li>
+    <li><strong>Side information is information.</strong> Vectors, modes and split
+      flags are paid for in the same currency as picture detail, which is why more
+      flexibility is not automatically better.</li>
+    <li><strong>The encoder must live inside the decoder's head.</strong> It
+      predicts from the reconstruction, never the original. That single constraint
+      produces drift, error propagation, and the need for I frames.</li>
+    <li><strong>Rate control is a buffer problem, not an average.</strong> Hitting
+      a target bitrate on average while emptying the buffer at the scene cut is
+      still a stall.</li>
+    <li><strong>Newer standards are bigger menus, not smaller files.</strong>
+      HEVC and AV1 add partition shapes, prediction modes and transform sizes —
+      more candidates for the same <code>J</code> comparison. The gain is real and
+      it is paid for in encoding time, which is why presets exist.</li>
+  </ol>
+
+  <h3 id="omissions">What this model leaves out</h3>
+  <p>The fidelity contract, stated plainly, because a caricature presented as the
+  truth would quietly miscalibrate you.</p>
+  <p><strong>Simulated honestly:</strong> the separable 8×8 DCT-II; a deadzone
+  quantizer on H.264's logarithmic step ladder (the step doubles every 6 QP); an
+  Exp-Golomb run/level entropy coder of the CAVLC family; intra DC, vertical and
+  horizontal prediction from genuinely reconstructed neighbours; integer-pel
+  rate-constrained full-search motion estimation against reconstructed references;
+  bidirectional prediction by averaging two references; macroblock partitioning;
+  Skip; the <code>J = D + λR</code> mode decision with λ = 0.85·2<sup>(QP−12)/3</sup>;
+  a leaky-bucket decoder buffer. Error propagation and drift are not scripted —
+  they emerge, because the references really are the reconstructions.</p>
+  <p><strong>Not here at all:</strong> colour — this is luma only, and chroma is
+  roughly another 25% of the bits and its own prediction machinery. CABAC, whose
+  context-adaptive arithmetic coding is worth 10–15% over the CAVLC-style coder
+  used here. Sub-pixel motion at half and quarter resolution with interpolation
+  filters, worth a great deal more than you might guess. Deblocking and SAO
+  filters, which is why your reconstructions look blockier than real ones at the
+  same bitrate. Multiple reference frames, weighted prediction, intra modes beyond
+  three of the nine in H.264, transform sizes other than 8×8, trellis
+  quantization, adaptive quantization by perceptual importance, and
+  rate–distortion optimised quantization. Everything the last fifteen years added
+  in HEVC, VP9, AV1 and VVC: quadtree and multi-type-tree partitioning, 35-to-67
+  intra directions, compound and warped motion, transform skip, film grain
+  synthesis. Real sequences, real camera noise, and real perceptual metrics —
+  PSNR is used here because it is honest arithmetic on the signal, but it is a
+  poor model of what an eye objects to, and no serious codec comparison relies on
+  it alone. And the frames are 160×96 synthetic images with exact integer motion,
+  which makes motion estimation far easier than it is in life.</p>
+  <p>What survives all of that is the <em>shape</em> of the system, and the shape
+  is what you came for.</p>
+
+  <h3>Where to go next</h3>
+  <ul>
+    <li>Run <code>ffmpeg -i in.mp4 -c:v libx264 -crf 23 -preset veryslow out.mp4</code>
+      against <code>-preset ultrafast</code> at the same CRF. Same standard, same
+      quantizer, very different sizes: that difference is entirely the search you
+      just did by hand.</li>
+    <li><code>ffprobe -show_frames</code> will print <code>pict_type</code> and
+      <code>pkt_size</code> per frame. The spikes are I frames and scene cuts —
+      level 7, on real video.</li>
+    <li>CRF is not a bitrate. It is approximately a fixed λ: a constant price for
+      a bit, letting the bitrate go wherever the content needs. That is why it
+      holds quality steady and why its file sizes are unpredictable.</li>
+  </ul>
+</section>
+
+<p class="foot">Built with the <strong>generalized Atomic Intrinsic Integration</strong>
+method — modelled on the structured methodology for designing games for conceptual
+understanding by Echeverría, Barrios, Nussbaum, Améstica &amp; Leclerc, generalized
+from physics to arbitrary systems. One self-contained file, no network, no tracking,
+no storage. All imagery is generated procedurally from a fixed seed, so your run is
+identical to everybody else's.</p>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atomic Games — playable explanations of real systems</title>
+<meta name="description" content="Games that build conceptual understanding of a system by making you make its decisions under a budget. Built with the generalized Atomic Intrinsic Integration method.">
+<style>
+:root{--bg:#fffff8;--ink:#1b1b17;--muted:#6a6a5e;--rule:#dcdccd;--link:#2f6f9f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+     font:16px/1.6 ui-serif,Georgia,'Times New Roman',serif}
+main{max-width:46rem;margin:0 auto;padding:3.5rem 1.2rem 6rem}
+h1{font-size:2.1rem;margin:0 0 .4rem;letter-spacing:-.01em}
+h2{font-size:1.2rem;margin:2.6rem 0 .5rem}
+.kicker{font:600 11px/1.4 ui-sans-serif,system-ui,sans-serif;letter-spacing:.14em;
+        text-transform:uppercase;color:var(--muted);margin:0 0 .3rem}
+.lede{font-size:1.08rem;color:#44443c}
+a{color:var(--link)}
+.card{display:block;border:1px solid var(--rule);border-radius:12px;background:#fff;
+      padding:1.1rem 1.2rem;margin:1rem 0;text-decoration:none;color:inherit}
+.card:hover{border-color:var(--link);box-shadow:0 2px 10px rgba(47,111,159,.1)}
+.card h3{margin:0 0 .25rem;font-size:1.1rem;color:var(--link)}
+.card p{margin:.3rem 0 0;font-size:14px;color:#4a4a42}
+.card .tags{margin-top:.6rem;font:12px ui-sans-serif,system-ui,sans-serif;color:var(--muted)}
+ol,ul{padding-left:1.25rem}li{margin:.35rem 0}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f2f2e6;padding:.05rem .3rem;border-radius:3px}
+.foot{color:var(--muted);font-size:13px;margin-top:3.5rem;border-top:1px solid var(--rule);padding-top:1rem}
+</style>
+</head>
+<body>
+<main>
+  <p class="kicker">Atomic Games</p>
+  <h1>Playable explanations of real systems</h1>
+  <p class="lede">Prose tells you the rules. A simulation lets you poke them. Only a
+  game makes you commit to a belief and pay for being wrong — and that payment is
+  where conceptual understanding actually comes from.</p>
+
+  <p>Each game here takes one system, finds the part of it you cannot see, puts a
+  lever on it, and then makes winning impossible without understanding it. They are
+  single HTML files: no build step, no network, no tracking, no storage. Open one
+  and it runs.</p>
+
+  <h2>The games</h2>
+
+  <a class="card" href="games/video-codec/">
+    <h3>Inside the Encoder →</h3>
+    <p>What H.264, HEVC and AV1 actually decide, and why two files at the same
+    bitrate can look nothing alike. Seven levels running a real block-based codec
+    written into the page — a genuine 8×8 DCT, deadzone quantizer, Exp-Golomb
+    entropy coder, motion compensation against reconstructed references, and a
+    rate–distortion mode decision. Every bit count and every decibel you see was
+    produced by actually encoding something.</p>
+    <p class="tags">video compression · rate–distortion · ~25 minutes</p>
+  </a>
+
+  <h2>How they are built</h2>
+  <p>With the <strong>generalized Atomic Intrinsic Integration</strong> method.
+  The original was defined by Echeverría, Barrios, Nussbaum, Améstica and Leclerc
+  for games teaching conceptual physics, fusing <em>intrinsic integration</em>
+  (Habgood &amp; Ainsworth) with an <em>atomic analysis</em> of game structure
+  (Koster, Cousins, Cook), and validated experimentally against a non-AII version
+  of the same game. This repository uses a generalization of it from physical laws
+  to arbitrary systems — codecs, protocols, markets, caches, supply chains.</p>
+
+  <p>The short version:</p>
+  <ol>
+    <li><strong>Model the system</strong> — levers, mechanisms, readouts, coupling,
+      and the conserved quantity nobody can conjure more of.</li>
+    <li><strong>Write down the misconceptions.</strong> They are the real
+      specification: a level that cannot be lost by someone holding the wrong
+      belief is not attacking anything.</li>
+    <li><strong>Atomize</strong> — one lever per low-level atom, one readout per
+      mechanism, the coupling drawn beside its parts.</li>
+    <li><strong>Put the learning on the critical path to winning.</strong>
+      Optional learning is skipped learning.</li>
+    <li><strong>Scaffold the invisible state, then fade it</strong> — present,
+      degraded, absent, inverted. Scaffolding left in place is a trap: players beat
+      the game by trial and error and learn nothing.</li>
+    <li><strong>Charge a Reflection Tax.</strong> A challenge is doing its job when
+      a wrong action costs more than a moment of thought.</li>
+  </ol>
+
+  <h2>Two rules these games keep</h2>
+  <ul>
+    <li><strong>Simulate the mechanism; never fake the readout.</strong> If a bar
+      says “bits”, something counted bits. You are calibrating real intuition
+      against these numbers, and a plausible formula invented to make a graph move
+      would quietly miscalibrate you.</li>
+    <li><strong>State what the model omits</strong>, in prose, inside the artifact.
+      A caricature presented as the truth is the documented ethical failure of
+      simulation explorables.</li>
+  </ul>
+
+  <p class="foot">Source: <a href="https://github.com/alejandroechev/atomic-games">github.com/alejandroechev/atomic-games</a>.
+  Every game is one self-contained file you can download and open offline.</p>
+</main>
+</body>
+</html>

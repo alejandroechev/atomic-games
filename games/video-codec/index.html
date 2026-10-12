@@ -1,0 +1,2241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside the Encoder — an atomic game about modern video codecs</title>
+<meta name="description" content="A playable, honest toy video encoder. Learn what H.264, HEVC and AV1 actually decide, by making those decisions yourself under a bit budget.">
+<style>
+:root{
+  --bg:#fffff8; --panel:#fff; --ink:#1b1b17; --muted:#6a6a5e; --rule:#dcdccd;
+  /* semantic colour — one colour, one concept, everywhere on the page */
+  --lever:#2f6f9f;      /* something you control */
+  --bits:#b4541e;       /* bits spent */
+  --mv:#7a4fa3;         /* motion / side information */
+  --quality:#2f7a52;    /* distortion & quality */
+  --bad:#a8322c;        /* failure */
+  --ghost:#9a9a8c;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);
+     font:16px/1.6 ui-serif,Georgia,'Times New Roman',serif;-webkit-text-size-adjust:100%}
+main{max-width:60rem;margin:0 auto;padding:2.5rem 1.1rem 6rem}
+h1{font-size:2.05rem;line-height:1.15;margin:0 0 .5rem;letter-spacing:-.01em}
+h2{font-size:1.3rem;margin:0 0 .35rem}
+h3{font-size:1.02rem;margin:1.4rem 0 .3rem;font-family:ui-sans-serif,system-ui,sans-serif}
+p{margin:.6rem 0}
+a{color:var(--lever)}
+.lede{font-size:1.1rem;color:#44443c}
+.kicker{font:600 11px/1.4 ui-sans-serif,system-ui,sans-serif;letter-spacing:.14em;
+        text-transform:uppercase;color:var(--muted);margin:0 0 .2rem}
+.sans{font-family:ui-sans-serif,system-ui,sans-serif}
+small,.small{font-size:13px}
+hr{border:0;border-top:1px solid var(--rule);margin:2.5rem 0}
+.level{border:1px solid var(--rule);border-radius:12px;background:var(--panel);
+       padding:1.1rem 1.2rem 1.3rem;margin:1.5rem 0;box-shadow:0 1px 0 rgba(0,0,0,.02)}
+.level[data-locked="1"]{opacity:.55}
+.goal{border-left:3px solid var(--lever);background:#f6faff;padding:.5rem .75rem;
+      margin:.8rem 0;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px}
+.tax{border-left:3px solid var(--bad);background:#fdf6f5;padding:.5rem .75rem;
+     margin:.8rem 0;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px}
+.figs{display:flex;flex-wrap:wrap;gap:.9rem;margin:.9rem 0 .2rem}
+figure{margin:0}
+figcaption{font:12px/1.35 ui-sans-serif,system-ui,sans-serif;color:var(--muted);
+           margin-top:.25rem;max-width:21rem}
+canvas{display:block;image-rendering:pixelated;border:1px solid var(--rule);
+       border-radius:4px;background:#111;width:320px;height:192px}
+canvas.sm{width:160px;height:96px}
+canvas.blk{width:104px;height:104px}
+canvas.wide{width:100%;max-width:660px;height:auto;aspect-ratio:160/96}
+svg.fig{display:block;border:1px solid var(--rule);border-radius:6px;background:#fcfcf4;
+        width:100%;height:auto}
+.controls{display:flex;flex-wrap:wrap;gap:1.1rem;align-items:flex-end;margin-top:1rem;
+          padding-top:.9rem;border-top:1px dashed var(--rule)}
+.ctl{display:flex;flex-direction:column;gap:.22rem;
+     font:13px/1.3 ui-sans-serif,system-ui,sans-serif;min-width:9rem}
+.ctl label{color:var(--muted);font-weight:600;letter-spacing:.01em}
+.ctl .val{color:var(--lever);font-weight:700;font-variant-numeric:tabular-nums}
+input[type=range]{width:13rem;accent-color:var(--lever)}
+select,button{font:13px ui-sans-serif,system-ui,sans-serif;padding:.42rem .7rem;
+              border:1px solid #c3c3b2;border-radius:6px;background:#fff;color:var(--ink);cursor:pointer}
+button.primary{background:var(--lever);border-color:var(--lever);color:#fff;font-weight:600}
+button:disabled{opacity:.4;cursor:not-allowed}
+.readouts{display:flex;flex-wrap:wrap;gap:1.4rem;margin:.9rem 0 0;
+          font:13px/1.4 ui-sans-serif,system-ui,sans-serif}
+.ro{min-width:7rem}
+.ro b{display:block;font-size:1.25rem;font-variant-numeric:tabular-nums;font-weight:700}
+.ro span{color:var(--muted)}
+.ro.bits b{color:var(--bits)} .ro.q b{color:var(--quality)} .ro.mv b{color:var(--mv)}
+.ro.fail b{color:var(--bad)}
+.msg{font:13px/1.5 ui-sans-serif,system-ui,sans-serif;margin-top:.8rem;min-height:1.2em}
+.msg.ok{color:var(--quality);font-weight:600}
+.msg.no{color:var(--bad);font-weight:600}
+.predict{border:1px dashed var(--lever);border-radius:8px;padding:.7rem .85rem;margin:.9rem 0;
+         background:#f7fbff;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px}
+.predict .q{font-weight:700;margin-bottom:.4rem}
+.predict .opts{display:flex;flex-wrap:wrap;gap:.45rem;margin:.4rem 0}
+.predict button{background:#fff}
+.predict button[aria-pressed=true]{background:var(--lever);color:#fff;border-color:var(--lever)}
+.verdict{margin-top:.5rem}
+.scaffold{font:11px/1.4 ui-sans-serif,system-ui,sans-serif;letter-spacing:.1em;
+          text-transform:uppercase;color:#fff;background:var(--muted);
+          border-radius:99px;padding:.15rem .55rem;display:inline-block;vertical-align:2px}
+.scaffold[data-s=present]{background:#4c8c5f}
+.scaffold[data-s=degraded]{background:#b58a2b}
+.scaffold[data-s=absent]{background:#8c4c4c}
+.scaffold[data-s=inverted]{background:#5b4c8c}
+table{border-collapse:collapse;width:100%;font:13px/1.45 ui-sans-serif,system-ui,sans-serif;margin:.8rem 0}
+th,td{border-bottom:1px solid var(--rule);padding:.35rem .5rem;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f2f2e6;
+     padding:.05rem .3rem;border-radius:3px}
+ol,ul{padding-left:1.25rem}
+li{margin:.3rem 0}
+noscript .warn{border:1px solid var(--bad);background:#fdf6f5;padding:.8rem;border-radius:8px}
+.legend{display:flex;flex-wrap:wrap;gap:.9rem;font:12px ui-sans-serif,system-ui,sans-serif;
+        color:var(--muted);margin:.5rem 0}
+.legend i{display:inline-block;width:.7rem;height:.7rem;border-radius:2px;margin-right:.3rem;vertical-align:-1px}
+.foot{color:var(--muted);font-size:13px;margin-top:3rem}
+@media (max-width:700px){canvas{width:100%;height:auto}canvas.blk{width:84px;height:84px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<main>
+
+<p class="kicker">An atomic game · built with the generalized Atomic Intrinsic Integration method</p>
+<h1>Inside the Encoder</h1>
+<p class="lede">Modern video codecs do not “compress frames”. They spend a budget.
+Every single decision inside H.264, HEVC, AV1 and VVC is the same comparison —
+<em>is this picture improvement worth what it costs in bits?</em> — made a few
+million times a second. This game makes you make those decisions, under a budget,
+against a real encoder running in this page.</p>
+
+<noscript><p class="warn"><strong>JavaScript is off, so the levers are missing.</strong>
+Everything below still explains how a block-based video encoder works; you just
+cannot play it.</p></noscript>
+
+<h2>The sentence most people get wrong</h2>
+<p><strong>“Higher bitrate means better quality, and the codec decides how good
+it looks.”</strong> Both halves are wrong in an interesting way. Quality per bit
+is set almost entirely by <em>decisions the encoder makes</em> — which parts of
+the picture to predict, from where, at what block size, and how much precision to
+destroy — and the video standard does not specify a single one of them. A
+standard defines only what a <em>decoder</em> must do with a bitstream. Two
+encoders claiming the same standard, at the same bitrate, can differ by an
+enormous visible margin, because one of them searched harder.</p>
+
+<h2>What is actually in this page</h2>
+<p>Not an animation of a codec. A codec. These levels run a real, small,
+block-based hybrid encoder written in the page: a separable 8×8 DCT, a deadzone
+quantizer on H.264's logarithmic step ladder, an Exp-Golomb run/level entropy
+coder from the CAVLC family, intra prediction from reconstructed neighbours,
+rate-constrained full-search motion compensation from reconstructed references,
+and a rate–distortion mode decision. Every number you will see — every bit count,
+every decibel — was produced by actually doing the work. Nothing is a stand-in
+formula tuned to make the graph move.</p>
+
+<p>That matters here more than it usually does, because you are about to
+calibrate your intuition on these readouts.</p>
+
+<h3>The five things every block-based codec does</h3>
+<table>
+<tr><th>Step</th><th>What it does</th><th>Why it exists</th></tr>
+<tr><td><strong>Predict</strong></td><td>Guess the block from pixels already decoded — neighbours in this frame (<em>intra</em>) or a patch of an earlier frame (<em>inter</em>)</td><td>Most of a picture is a repeat of something already sent</td></tr>
+<tr><td><strong>Subtract</strong></td><td>Keep only the <em>residual</em>: the part the guess got wrong</td><td>You only have to transmit your surprise</td></tr>
+<tr><td><strong>Transform</strong></td><td>8×8 DCT on the residual</td><td>Concentrates the energy into a few coefficients</td></tr>
+<tr><td><strong>Quantize</strong></td><td>Divide by a step and round; small coefficients become exactly zero</td><td>The <em>only</em> lossy step, and the one that creates the compression</td></tr>
+<tr><td><strong>Entropy code</strong></td><td>Short codes for common values, long ones for rare</td><td>Lossless packing of what is left</td></tr>
+</table>
+
+<p>The decoder runs steps 5→1 backwards and is nearly brainless: it has no
+choices to make. All the intelligence, and all the variation between products,
+lives in the encoder's search. One consequence shapes everything else in this
+game: the encoder must predict from the <em>decoded</em> picture, not the
+original, because that is all the decoder will have. Any error it leaves behind
+is inherited by every frame that follows.</p>
+
+<h3>How to play</h3>
+<p>Seven levels, each introducing exactly one new decision. Each level states its
+goal and what it costs you to be wrong — a bit budget, a limited number of
+commits, or an irreversible choice. The tag at the top of each level tells you
+how much help you are getting:</p>
+<p class="small">
+<span class="scaffold" data-s="present">scaffold present</span> every readout is live while you move the lever ·
+<span class="scaffold" data-s="degraded">scaffold degraded</span> readouts only after you commit ·
+<span class="scaffold" data-s="inverted">scaffold inverted</span> you must predict the result before you see it ·
+<span class="scaffold" data-s="absent">scaffold absent</span> you are on your own
+</p>
+<p>The help is removed on purpose and in that order. With the readouts permanently
+on, you can beat every level by trial and error and learn nothing — which is
+exactly the failure this game's design method was written to prevent. The last
+level gives you no readouts at all until the frame is already sent.</p>
+
+<hr>
+
+<!-- ======================= LEVEL 1 ======================= -->
+<section class="level" id="l1" aria-labelledby="l1h">
+  <p class="kicker">Level 1 of 7 · new decision: <span style="color:var(--lever)">how much precision to destroy</span>
+     <span class="scaffold" data-s="present">scaffold present</span></p>
+  <h2 id="l1h">The quantizer — where the loss happens</h2>
+  <p>One frame, no prediction at all: just transform, quantize, count bits. The
+  quantizer divides every DCT coefficient by a step and rounds. Anything smaller
+  than two-thirds of a step becomes <em>exactly zero</em> and costs almost
+  nothing to send. QP sets that step, and the step <strong>doubles every six
+  QP</strong> — so QP is a logarithmic dial, which is why the quality curve has a
+  cliff in it.</p>
+
+  <div class="predict" id="l1-predict">
+    <div class="q">Before you touch anything. Moving from QP&nbsp;24 to QP&nbsp;36 roughly halves the file. What does that cost in quality?</div>
+    <div class="opts" role="group" aria-label="Prediction options for level 1">
+      <button data-v="a" aria-pressed="false">About 1 dB — barely anything</button>
+      <button data-v="b" aria-pressed="false">About 10 dB — clearly visible</button>
+      <button data-v="c" aria-pressed="false">About 25 dB — destroyed</button>
+    </div>
+    <p class="verdict small" id="l1-verdict"></p>
+  </div>
+
+  <div class="figs">
+    <figure><canvas id="l1-src" width="160" height="96" aria-label="The original frame"></canvas>
+      <figcaption>Original frame</figcaption></figure>
+    <figure><canvas id="l1-rec" width="160" height="96" aria-label="The decoded frame at the current QP"></canvas>
+      <figcaption>What the decoder gets back</figcaption></figure>
+  </div>
+  <div class="figs">
+    <figure><canvas id="l1-err" width="160" height="96" class="sm" aria-label="Error heat map"></canvas>
+      <figcaption>Error heat map — where the quality went. Detail dies first; flat sky survives.</figcaption></figure>
+    <figure><canvas id="l1-coef" width="80" height="80" class="blk" aria-label="Quantized coefficients of one block"></canvas>
+      <figcaption>One 8×8 block's coefficients. Dark cells were zeroed; top-left is the block's average brightness.</figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l1-qp">Quantization parameter (QP)</label>
+      <input type="range" id="l1-qp" min="18" max="46" step="1" value="26">
+      <span class="val">QP <span id="l1-qp-val">26</span> · step <span id="l1-step">—</span></span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l1-commit">Commit</label>
+      <button id="l1-commit" class="primary">Send this frame</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro bits"><b id="l1-bits">—</b><span>bits for the frame</span></div>
+    <div class="ro q"><b id="l1-psnr">—</b><span>dB quality (PSNR)</span></div>
+    <div class="ro"><b id="l1-zero">—</b><span>coefficients zeroed</span></div>
+    <div class="ro"><b id="l1-tries">3</b><span>commits left</span></div>
+  </div>
+
+  <div class="goal"><strong>Goal.</strong> Send this frame in <strong>7,000 bits or fewer</strong>
+    while keeping quality at <strong>33.5 dB or better</strong>.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Three commits. Run out
+    and the level is lost — restart it and try again with what you learned.</div>
+  <p class="msg" id="l1-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 2 ======================= -->
+<section class="level" id="l2" aria-labelledby="l2h">
+  <p class="kicker">Level 2 of 7 · new decision: <span style="color:var(--lever)">what to throw the precision away from</span>
+     <span class="scaffold" data-s="inverted">scaffold inverted</span></p>
+  <h2 id="l2h">The transform — why the DCT comes first</h2>
+  <p>Quantizing is just rounding. You could round the pixels directly and skip the
+  transform entirely. Both paths below use the <em>same</em> quantizer and the
+  <em>same</em> entropy coder, and the page searches for a step size that makes
+  them spend the <strong>same number of bits</strong>. Only one thing differs:
+  whether the rounding happens on pixels or on DCT coefficients.</p>
+
+  <div class="predict" id="l2-predict">
+    <div class="q">Same bits, same coder, same quantizer. How big is the gap?</div>
+    <div class="opts" role="group" aria-label="Prediction options for level 2">
+      <button data-v="a" aria-pressed="false">A wash — the transform is bookkeeping</button>
+      <button data-v="b" aria-pressed="false">The DCT wins by a few dB</button>
+      <button data-v="c" aria-pressed="false">The DCT wins by around 20 dB</button>
+    </div>
+    <p class="verdict small" id="l2-verdict"></p>
+  </div>
+
+  <div class="figs">
+    <figure><canvas id="l2-dct" width="160" height="96" aria-label="Reconstruction with the DCT"></canvas>
+      <figcaption>Rounding the <strong>DCT coefficients</strong> — <span id="l2-dct-r">—</span></figcaption></figure>
+    <figure><canvas id="l2-px" width="160" height="96" aria-label="Reconstruction without the DCT"></canvas>
+      <figcaption>Rounding the <strong>pixels</strong> — <span id="l2-px-r">—</span></figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l2-budget">Bit budget for the frame</label>
+      <input type="range" id="l2-budget" min="8500" max="16000" step="500" value="10000" disabled>
+      <span class="val"><span id="l2-budget-val">10000</span> bits</span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l2-run">Reveal</label>
+      <button id="l2-run" class="primary" disabled>Lock in my guess and run both</button>
+    </div>
+  </div>
+  <p class="msg" id="l2-msg">Commit a prediction first — the answer is hidden until you do.</p>
+  <p class="small">A natural picture is mostly smooth, so in the DCT domain nearly
+  all its energy lands in a handful of low-frequency coefficients and the rest is
+  near zero — free to send. In the pixel domain every one of the 64 values is
+  equally important, so an equal budget buys you 64 coarse numbers instead of 6
+  good ones. This is <em>energy compaction</em>, and it is the whole reason a
+  transform is in the pipeline.</p>
+</section>
+
+<!-- ======================= LEVEL 3 ======================= -->
+<section class="level" id="l3" aria-labelledby="l3h">
+  <p class="kicker">Level 3 of 7 · new decision: <span style="color:var(--lever)">what to predict from</span>
+     <span class="scaffold" data-s="present">scaffold present</span></p>
+  <h2 id="l3h">Prediction — send the surprise, not the picture</h2>
+  <p>So far every block has been coded from scratch. Real codecs almost never do
+  that. They guess the block first — from the decoded pixels directly above and
+  left of it, or from the same place in the previous frame — and then transmit
+  only the <em>residual</em>: guess minus truth. A good guess makes the residual
+  nearly flat, and a flat residual quantizes to almost nothing.</p>
+  <p>Five blocks are marked on the frame. They do not all want the same guess:
+  one sits on a smooth gradient, one on a hard vertical edge, one on a moving
+  object. <strong>Pick a mode for each.</strong></p>
+
+  <div class="figs">
+    <figure><canvas id="l3-frame" width="160" height="96" aria-label="Frame with the five target blocks marked"></canvas>
+      <figcaption>Click a marked block to work on it. Green = already committed.</figcaption></figure>
+    <figure><canvas id="l3-prev" width="160" height="96" class="sm" aria-label="The previous decoded frame"></canvas>
+      <figcaption>The previous <em>decoded</em> frame — all the encoder may predict from.</figcaption></figure>
+  </div>
+  <div class="figs">
+    <figure><canvas id="l3-b-src" width="8" height="8" class="blk" aria-label="Source block"></canvas><figcaption>Truth</figcaption></figure>
+    <figure><canvas id="l3-b-pred" width="8" height="8" class="blk" aria-label="Prediction"></canvas><figcaption>The guess</figcaption></figure>
+    <figure><canvas id="l3-b-res" width="8" height="8" class="blk" aria-label="Residual"></canvas><figcaption>Residual — <strong>flat grey is free</strong></figcaption></figure>
+    <figure><canvas id="l3-b-rec" width="8" height="8" class="blk" aria-label="Reconstruction"></canvas><figcaption>What comes back</figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l3-block">Block</label>
+      <select id="l3-block"></select>
+    </div>
+    <div class="ctl">
+      <label for="l3-mode">Prediction mode</label>
+      <select id="l3-mode">
+        <option value="none">None — code it from scratch</option>
+        <option value="dc">Intra DC — flat average of the neighbours</option>
+        <option value="v">Intra vertical — copy the row above downwards</option>
+        <option value="h">Intra horizontal — copy the column left across</option>
+        <option value="inter">Inter — same place in the previous frame</option>
+      </select>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l3-commit">Commit</label>
+      <button id="l3-commit" class="primary">Commit this block</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro bits"><b id="l3-bits">—</b><span>bits for this block</span></div>
+    <div class="ro q"><b id="l3-err">—</b><span>residual energy left</span></div>
+    <div class="ro bits"><b id="l3-total">0</b><span>bits spent of 330</span></div>
+    <div class="ro"><b id="l3-done">0/5</b><span>blocks committed</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Commit all five blocks for <strong>330 bits or fewer</strong> in total. Coding all five from scratch costs over 400 — there is no lazy way through.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> A committed block is
+    final — you cannot go back and recode it, exactly as a real encoder cannot.
+    Overspend and the level is lost.</div>
+  <p class="msg" id="l3-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 4 ======================= -->
+<section class="level" id="l4" aria-labelledby="l4h">
+  <p class="kicker">Level 4 of 7 · new decision: <span style="color:var(--lever)">where in the past frame to look</span>
+     <span class="scaffold" data-s="present">scaffold present</span></p>
+  <h2 id="l4h">Motion — the surprise is somewhere else</h2>
+  <p>The camera is panning and three objects are moving. Predicting a block from
+  the <em>same place</em> in the previous frame is then a bad guess, but predicting
+  it from the place that content <em>came from</em> is an excellent one. That
+  offset is a <strong>motion vector</strong>, and the encoder must transmit it.</p>
+  <p>Drag the two sliders until the residual goes flat grey. Watch both bars: the
+  orange residual bar falls as your aim improves, and the purple motion bar grows
+  as the vector gets further from zero. <strong>The vector is not free.</strong></p>
+
+  <div class="figs">
+    <figure><canvas id="l4-frame" width="160" height="96" aria-label="Current frame with the target block marked"></canvas>
+      <figcaption>Current frame. The marked block is the one you are coding.</figcaption></figure>
+    <figure><canvas id="l4-ref" width="160" height="96" aria-label="Reference frame with the search position marked"></canvas>
+      <figcaption>Previous decoded frame. The box is where your vector is pointing.</figcaption></figure>
+  </div>
+  <div class="figs">
+    <figure><canvas id="l4-b-src" width="8" height="8" class="blk" aria-label="Source block"></canvas><figcaption>Truth</figcaption></figure>
+    <figure><canvas id="l4-b-pred" width="8" height="8" class="blk" aria-label="Motion-compensated prediction"></canvas><figcaption>Fetched from the past</figcaption></figure>
+    <figure><canvas id="l4-b-res" width="8" height="8" class="blk" aria-label="Residual"></canvas><figcaption>Residual</figcaption></figure>
+    <figure>
+      <svg class="fig" id="l4-bar" viewBox="0 0 200 104" role="img" aria-labelledby="l4-bar-title" style="width:200px">
+        <title id="l4-bar-title">Stacked cost of this block: residual bits plus motion vector bits.</title>
+        <g id="l4-bar-layer"></g>
+      </svg>
+      <figcaption>Total cost = residual + motion vector.</figcaption>
+    </figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l4-block">Block</label>
+      <select id="l4-block"></select>
+    </div>
+    <div class="ctl">
+      <label for="l4-mvx">Motion vector — horizontal</label>
+      <input type="range" id="l4-mvx" min="-8" max="8" step="1" value="0">
+      <span class="val"><span id="l4-mvx-val">0</span> px</span>
+    </div>
+    <div class="ctl">
+      <label for="l4-mvy">Motion vector — vertical</label>
+      <input type="range" id="l4-mvy" min="-8" max="8" step="1" value="0">
+      <span class="val"><span id="l4-mvy-val">0</span> px</span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l4-commit">Commit</label>
+      <button id="l4-commit" class="primary">Commit this vector</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro"><b id="l4-sad">—</b><span>prediction error (SAD)</span></div>
+    <div class="ro bits"><b id="l4-rbits">—</b><span>residual bits</span></div>
+    <div class="ro mv"><b id="l4-mbits">—</b><span>vector bits</span></div>
+    <div class="ro bits"><b id="l4-total">0</b><span>bits spent of 230</span></div>
+    <div class="ro"><b id="l4-done">0/4</b><span>blocks committed</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Code all four blocks for <strong>230 bits or fewer</strong>.
+    Standing still on all four costs over 600. One of the four is already predicted perfectly
+    without moving — find out what a vector is <em>worth</em> there.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Commits are final.</div>
+  <p class="msg" id="l4-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 5 ======================= -->
+<section class="level" id="l5" aria-labelledby="l5h">
+  <p class="kicker">Level 5 of 7 · new decision: <span style="color:var(--lever)">how finely to carve the picture</span>
+     <span class="scaffold" data-s="degraded">scaffold degraded</span></p>
+  <h2 id="l5h">Partitioning — where one vector is not enough</h2>
+  <p>Up to now every block had one vector. Real pictures are not that tidy: a
+  16×16 macroblock lying across the edge of a moving object contains two different
+  motions, and no single vector describes both. So the encoder may <strong>split
+  it into four 8×8 partitions</strong>, each with its own vector — four times the
+  accuracy, four times the vectors to transmit.</p>
+  <p>Sixty macroblocks. Click the ones you think need splitting. <strong>Your live
+  readouts are gone:</strong> you get the totals only after you press Encode, so
+  you have to reason about where the motion disagrees instead of watching a number.</p>
+
+  <div class="figs">
+    <figure>
+      <canvas id="l5-frame" width="160" height="96" class="wide" aria-label="Frame divided into macroblocks; click to split"></canvas>
+      <figcaption>Click a macroblock to split it (shown divided into four). Click again to merge.</figcaption>
+    </figure>
+  </div>
+  <div class="legend">
+    <span><i style="background:#2f6f9f"></i>you split this one</span>
+    <span><i style="background:#9a9a8c"></i>the encoder's own choice, revealed after you commit</span>
+  </div>
+
+  <div class="controls">
+    <div class="ctl" style="min-width:auto">
+      <label for="l5-none">Reset</label>
+      <button id="l5-none">Split nothing</button>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l5-all">Fill</label>
+      <button id="l5-all">Split everything</button>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l5-run">Encode</label>
+      <button id="l5-run" class="primary">Encode the frame</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro bits"><b id="l5-bits">—</b><span>total bits</span></div>
+    <div class="ro mv"><b id="l5-mv">—</b><span>of those, vector bits</span></div>
+    <div class="ro q"><b id="l5-psnr">—</b><span>dB quality</span></div>
+    <div class="ro"><b id="l5-split">0</b><span>macroblocks split</span></div>
+    <div class="ro"><b id="l5-tries">3</b><span>encodes left</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Beat <strong>split-nothing</strong> on
+    bits <em>and</em> on quality at the same time. Splitting everything will not do it.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Three encodes. Each one
+    burns a try whether it helps or not.</div>
+  <p class="msg" id="l5-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 6 ======================= -->
+<section class="level" id="l6" aria-labelledby="l6h">
+  <p class="kicker">Level 6 of 7 · new decision: <span style="color:var(--lever)">the price of a bit</span>
+     <span class="scaffold" data-s="inverted">scaffold inverted</span></p>
+  <h2 id="l6h">J = D + λR — the one rule under all of it</h2>
+  <p>Quantizer, prediction mode, vector, partition: four separate levers, and you
+  have been choosing each by feel. An encoder does not. It scores every candidate
+  with one number —</p>
+  <p style="text-align:center;font-size:1.15rem"><code>J = D + λ·R</code> &nbsp;
+    <span class="small">distortion, plus λ times the bits</span></p>
+  <p>— and keeps the lowest. <strong>λ is the exchange rate between squared error
+  and bits.</strong> Raise it and bits get expensive, so the encoder starts
+  refusing to pay for detail and falls back on cheaper modes. Lower it and it will
+  buy anything. Changing λ does not change the quantizer at all; it changes what
+  the encoder is <em>willing to spend</em>.</p>
+
+  <div class="predict" id="l6-predict">
+    <div class="q">At a fixed QP, you multiply the price of a bit by twenty. Which mode takes over the frame?</div>
+    <div class="opts" role="group" aria-label="Prediction options for level 6">
+      <button data-v="a" aria-pressed="false">Intra — stop trusting the past</button>
+      <button data-v="b" aria-pressed="false">Split 8×8 — be more accurate</button>
+      <button data-v="c" aria-pressed="false">Skip — send nothing at all</button>
+    </div>
+    <p class="verdict small" id="l6-verdict"></p>
+  </div>
+
+  <div class="figs">
+    <figure>
+      <svg class="fig" id="l6-rd" viewBox="0 0 420 260" role="img" aria-labelledby="l6-rd-title" style="max-width:460px">
+        <title id="l6-rd-title">Rate-distortion plane: bits spent against quality obtained, with your committed operating points.</title>
+        <g id="l6-rd-layer"></g>
+      </svg>
+      <figcaption>Every encode you commit lands here. The green box is the target.
+        Up is better, left is cheaper — you want the top-left.</figcaption>
+    </figure>
+    <figure><canvas id="l6-rec" width="160" height="96" aria-label="The encoded frame, shown after committing"></canvas>
+      <figcaption>Shown only after you commit — <span id="l6-cap">not yet encoded</span></figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l6-qp">Quantizer (QP) — how much precision to destroy</label>
+      <input type="range" id="l6-qp" min="22" max="40" step="1" value="30">
+      <span class="val">QP <span id="l6-qp-val">30</span></span>
+    </div>
+    <div class="ctl">
+      <label for="l6-lam">λ — the price of a bit</label>
+      <input type="range" id="l6-lam" min="-10" max="26" step="1" value="0">
+      <span class="val">×<span id="l6-lam-val">1.00</span> of the textbook value</span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l6-run">Commit</label>
+      <button id="l6-run" class="primary">Encode and plot</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro bits"><b id="l6-bits">—</b><span>bits</span></div>
+    <div class="ro q"><b id="l6-psnr">—</b><span>dB</span></div>
+    <div class="ro"><b id="l6-modes">—</b><span>mode mix</span></div>
+    <div class="ro"><b id="l6-tries">5</b><span>encodes left</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Land a point inside the green box:
+    <strong>2,800 bits or fewer</strong> at <strong>38.0 dB or better</strong>.
+    Your starting point misses it by about 400 bits, and no amount of λ alone will ever
+    reach it — λ is not a quality dial.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Five encodes, and the
+    picture stays hidden until each one is spent.</div>
+  <p class="msg" id="l6-msg"></p>
+</section>
+
+<!-- ======================= LEVEL 7 ======================= -->
+<section class="level" id="l7" aria-labelledby="l7h">
+  <p class="kicker">Level 7 of 7 · everything at once
+     <span class="scaffold" data-s="absent">scaffold absent</span></p>
+  <h2 id="l7h">Ship the shot — rate control, frame types, and a channel that will not wait</h2>
+  <p>Twenty-four frames, going out over a link that delivers a fixed
+  <strong>3,200 bits per frame interval</strong> and no more. The decoder plays
+  from a buffer. Spend more than arrives and the buffer drains; empty it and
+  playback <strong>stalls</strong> — the failure every real rate controller exists
+  to prevent.</p>
+  <p>You choose, one frame at a time and with no take-backs:</p>
+  <ul>
+    <li><strong>I</strong> — code it from scratch. Expensive, but it owes nothing to the past and lets a viewer join here.</li>
+    <li><strong>P</strong> — predict from the previous decoded frame. Usually several times cheaper.</li>
+    <li><strong>B</strong> — predict from the previous <em>and</em> the next frame, averaged. Cheaper still, but the encoder must code the future frame first, so it commits two frames at once and adds a frame of <strong>delay</strong>. You have three frames of delay for the whole shot and no more.</li>
+    <li><strong>QP</strong> — the quantizer, as in level 1.</li>
+  </ul>
+  <p>No live readouts. You find out what a frame cost after it is sent. Somewhere
+  in this shot the camera cuts to a different scene; you will not be told when.</p>
+
+  <div class="predict" id="l7-predict">
+    <div class="q">Before each frame: how expensive will it be?</div>
+    <div class="opts" role="group" aria-label="Per-frame prediction">
+      <button data-v="cheap" aria-pressed="false">Cheap — under 2,500 bits</button>
+      <button data-v="mid" aria-pressed="false">Normal — 2,500 to 6,000</button>
+      <button data-v="dear" aria-pressed="false">Expensive — over 6,000</button>
+    </div>
+    <p class="verdict small" id="l7-verdict">A correct call earns you 600 bits of buffer. A wrong one costs nothing but the information.</p>
+  </div>
+
+  <div class="figs">
+    <figure>
+      <svg class="fig" id="l7-timeline" viewBox="0 0 660 190" role="img" aria-labelledby="l7-tl-title">
+        <title id="l7-tl-title">Per-frame bit cost and the decoder buffer level across the shot.</title>
+        <g id="l7-tl-layer"></g>
+      </svg>
+      <figcaption>Orange bars: bits spent per frame. Green line: buffer level — if it
+        touches the floor, playback stalls.</figcaption>
+    </figure>
+  </div>
+  <div class="figs">
+    <figure><canvas id="l7-src" width="160" height="96" class="sm" aria-label="The frame about to be coded"></canvas>
+      <figcaption>Frame <span id="l7-t">0</span> — what you are about to send</figcaption></figure>
+    <figure><canvas id="l7-rec" width="160" height="96" class="sm" aria-label="The last decoded frame"></canvas>
+      <figcaption>Last decoded frame — what the viewer actually saw</figcaption></figure>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l7-type">Frame type</label>
+      <select id="l7-type">
+        <option value="P">P — predict from the past</option>
+        <option value="I">I — code from scratch</option>
+        <option value="B">B — predict from both sides (costs 1 delay)</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="l7-qp">Quantizer (QP)</label>
+      <input type="range" id="l7-qp" min="22" max="42" step="1" value="30">
+      <span class="val">QP <span id="l7-qp-val">30</span></span>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l7-send">Send</label>
+      <button id="l7-send" class="primary">Send frame</button>
+    </div>
+    <div class="ctl" style="min-width:auto">
+      <label for="l7-restart">Restart</label>
+      <button id="l7-restart">Restart the shot</button>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="ro"><b id="l7-buf">10,000</b><span>buffer (stall at 0)</span></div>
+    <div class="ro bits"><b id="l7-last">—</b><span>last frame cost</span></div>
+    <div class="ro q"><b id="l7-lastq">—</b><span>dB of that frame</span></div>
+    <div class="ro fail"><b id="l7-strikes">0/2</b><span>frames below 34 dB</span></div>
+    <div class="ro"><b id="l7-delay">3</b><span>delay budget left</span></div>
+    <div class="ro q"><b id="l7-avg">—</b><span>average dB so far (need 36.6)</span></div>
+  </div>
+  <div class="goal"><strong>Goal.</strong> Get all 24 frames out with the buffer never
+    reaching zero, no more than two frames below 34 dB, and an <strong>average of 36.6 dB
+    or better</strong> across the shot. There is no separate bit cap — the channel is the
+    budget. Note what that implies: a quantizer setting that is right for the easy frames is
+    wrong for the hard ones, and finding that out frame by frame is the entire job of a rate
+    controller.</div>
+  <div class="tax"><strong>What it costs to be wrong.</strong> Everything is final.
+    A frame coded badly is also the reference the next frame predicts from, so its
+    error is inherited — the bits you save now are borrowed, not earned. Empty the
+    buffer and the run is over.</div>
+  <p class="msg" id="l7-msg"></p>
+</section>
+
+<hr>
+
+<!-- ======================= DEBRIEF ======================= -->
+<section class="level" id="debrief" aria-labelledby="dbh">
+  <p class="kicker">Debrief</p>
+  <h2 id="dbh">What you now know, and what killed the thing you believed</h2>
+
+  <table>
+    <tr><th style="width:34%">What people believe</th><th>What actually happened</th></tr>
+    <tr><td><strong>More bitrate means better quality.</strong></td>
+        <td>Only along one encoder's curve. In level 2 two encodes spent identical bits and differed by about twenty decibels, because one of them transformed first. The bitrate is an input; <em>quality per bit</em> is the output of a search.</td></tr>
+    <tr><td><strong>The codec decides how good it looks.</strong></td>
+        <td>The standard defines only the decoder. Every choice you made in levels 3–6 — mode, vector, partition, λ — is unspecified by H.264, HEVC or AV1 and is where encoders actually differ. This is why two “H.264 1080p 5&nbsp;Mbps” files can look nothing alike, and why a slower preset looks better at the same bitrate: it searches more of exactly these decisions.</td></tr>
+    <tr><td><strong>Each frame is a picture.</strong></td>
+        <td>Most frames are corrections. A P frame here costs roughly a third of an I frame, and the great majority of its macroblocks ended up as <em>Skip</em> — literally “the previous frame, shifted; I have nothing to add”.</td></tr>
+    <tr><td><strong>Motion vectors are free.</strong></td>
+        <td>Level 4's flat-sky block: a perfect vector reduced the residual by almost nothing and the vector itself cost more than it saved. This is why encoders minimise <em>SAD + λ·(vector bits)</em> rather than SAD, and why a “more accurate” motion search can make a file bigger.</td></tr>
+    <tr><td><strong>Smaller blocks are more accurate, so split more.</strong></td>
+        <td>Splitting everything in level 5 cost more bits <em>and</em> barely moved quality, because four vectors describing one single motion is three wasted vectors. Splitting pays only where motion genuinely disagrees inside a block — object boundaries. Every partition choice is side information someone has to transmit.</td></tr>
+    <tr><td><strong>Lower the quantizer to make the file smaller.</strong></td>
+        <td>That is one of two dials and it is the blunt one. λ changes what the encoder is willing to buy without changing precision at all. In level 6 neither dial alone reached the target box.</td></tr>
+    <tr><td><strong>Saving bits on a frame is free if it looks acceptable.</strong></td>
+        <td>It is a loan. Every later P frame predicts from your decoded output, so its error propagates until the next I frame pays it off — which you felt directly as drift in level 7.</td></tr>
+  </table>
+
+  <h3>The transferable rules</h3>
+  <ol>
+    <li><strong>Every decision is <code>J = D + λR</code>.</strong> Mode, vector,
+      partition, quantizer, frame type — all of it is one comparison, repeated
+      millions of times a second. If you only remember one thing, remember that an
+      encoder is a search algorithm with a price list.</li>
+    <li><strong>Transmit surprise, never content.</strong> Predict as well as you
+      can, then send only the error. Everything else in the pipeline exists to
+      make the error cheap.</li>
+    <li><strong>Side information is information.</strong> Vectors, modes and split
+      flags are paid for in the same currency as picture detail, which is why more
+      flexibility is not automatically better.</li>
+    <li><strong>The encoder must live inside the decoder's head.</strong> It
+      predicts from the reconstruction, never the original. That single constraint
+      produces drift, error propagation, and the need for I frames.</li>
+    <li><strong>Rate control is a buffer problem, not an average.</strong> Hitting
+      a target bitrate on average while emptying the buffer at the scene cut is
+      still a stall.</li>
+    <li><strong>Newer standards are bigger menus, not smaller files.</strong>
+      HEVC and AV1 add partition shapes, prediction modes and transform sizes —
+      more candidates for the same <code>J</code> comparison. The gain is real and
+      it is paid for in encoding time, which is why presets exist.</li>
+  </ol>
+
+  <h3 id="omissions">What this model leaves out</h3>
+  <p>The fidelity contract, stated plainly, because a caricature presented as the
+  truth would quietly miscalibrate you.</p>
+  <p><strong>Simulated honestly:</strong> the separable 8×8 DCT-II; a deadzone
+  quantizer on H.264's logarithmic step ladder (the step doubles every 6 QP); an
+  Exp-Golomb run/level entropy coder of the CAVLC family; intra DC, vertical and
+  horizontal prediction from genuinely reconstructed neighbours; integer-pel
+  rate-constrained full-search motion estimation against reconstructed references;
+  bidirectional prediction by averaging two references; macroblock partitioning;
+  Skip; the <code>J = D + λR</code> mode decision with λ = 0.85·2<sup>(QP−12)/3</sup>;
+  a leaky-bucket decoder buffer. Error propagation and drift are not scripted —
+  they emerge, because the references really are the reconstructions.</p>
+  <p><strong>Not here at all:</strong> colour — this is luma only, and chroma is
+  roughly another 25% of the bits and its own prediction machinery. CABAC, whose
+  context-adaptive arithmetic coding is worth 10–15% over the CAVLC-style coder
+  used here. Sub-pixel motion at half and quarter resolution with interpolation
+  filters, worth a great deal more than you might guess. Deblocking and SAO
+  filters, which is why your reconstructions look blockier than real ones at the
+  same bitrate. Multiple reference frames, weighted prediction, intra modes beyond
+  three of the nine in H.264, transform sizes other than 8×8, trellis
+  quantization, adaptive quantization by perceptual importance, and
+  rate–distortion optimised quantization. Everything the last fifteen years added
+  in HEVC, VP9, AV1 and VVC: quadtree and multi-type-tree partitioning, 35-to-67
+  intra directions, compound and warped motion, transform skip, film grain
+  synthesis. Real sequences, real camera noise, and real perceptual metrics —
+  PSNR is used here because it is honest arithmetic on the signal, but it is a
+  poor model of what an eye objects to, and no serious codec comparison relies on
+  it alone. And the frames are 160×96 synthetic images with exact integer motion,
+  which makes motion estimation far easier than it is in life.</p>
+  <p>What survives all of that is the <em>shape</em> of the system, and the shape
+  is what you came for.</p>
+
+  <h3>Where to go next</h3>
+  <ul>
+    <li>Run <code>ffmpeg -i in.mp4 -c:v libx264 -crf 23 -preset veryslow out.mp4</code>
+      against <code>-preset ultrafast</code> at the same CRF. Same standard, same
+      quantizer, very different sizes: that difference is entirely the search you
+      just did by hand.</li>
+    <li><code>ffprobe -show_frames</code> will print <code>pict_type</code> and
+      <code>pkt_size</code> per frame. The spikes are I frames and scene cuts —
+      level 7, on real video.</li>
+    <li>CRF is not a bitrate. It is approximately a fixed λ: a constant price for
+      a bit, letting the bitrate go wherever the content needs. That is why it
+      holds quality steady and why its file sizes are unpredictable.</li>
+  </ul>
+</section>
+
+<p class="foot">Built with the <strong>generalized Atomic Intrinsic Integration</strong>
+method — modelled on the structured methodology for designing games for conceptual
+understanding by Echeverría, Barrios, Nussbaum, Améstica &amp; Leclerc, generalized
+from physics to arbitrary systems. One self-contained file, no network, no tracking,
+no storage. All imagery is generated procedurally from a fixed seed, so your run is
+identical to everybody else's.</p>
+
+</main>
+<script type="module">
+/* Bundled from src/engine.js and src/game.js by build.py — edit those, not this. */
+/* ============================================================================
+   engine.js — a small but real block-based hybrid video codec.
+
+   Nothing in this file is faked. Every number the game shows the player is
+   produced here by actually doing the thing:
+     · the DCT is a real separable 8x8 DCT-II
+     · quantization is a real deadzone quantizer with an H.264-style step ladder
+     · bit counts come from a real Exp-Golomb run/level coder (the CAVLC family)
+     · distortion is measured against a real reconstruction, so drift is real
+     · motion compensation predicts from the *reconstructed* reference, exactly
+       as a real encoder must, which is why error propagation happens by itself
+   ========================================================================= */
+
+const W = 160, H = 96;            // luma resolution of the toy sequence
+const BS = 8;                     // transform block size
+const MBS = 16;                   // macroblock size
+const BW = W / BS, BH = H / BS;   // blocks across / down
+const MBW = W / MBS, MBH = H / MBS;
+
+/* ---------------------------------------------------------------- random --- */
+// Seeded so every run of the game is identical. An unseeded game cannot be
+// reasoned about: the player would never know if the change was theirs.
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ------------------------------------------------------------- the scene --- */
+// A "world" larger than the frame, so panning the camera across it produces
+// genuine translational motion that motion compensation can actually find.
+function valueNoise(rnd, w, h, cell) {
+  const gw = Math.ceil(w / cell) + 2, gh = Math.ceil(h / cell) + 2;
+  const g = new Float32Array(gw * gh);
+  for (let i = 0; i < g.length; i++) g[i] = rnd();
+  const out = new Float32Array(w * h);
+  const sm = (t) => t * t * (3 - 2 * t);
+  for (let y = 0; y < h; y++) {
+    const gy = y / cell, y0 = Math.floor(gy), fy = sm(gy - y0);
+    for (let x = 0; x < w; x++) {
+      const gx = x / cell, x0 = Math.floor(gx), fx = sm(gx - x0);
+      const a = g[y0 * gw + x0], b = g[y0 * gw + x0 + 1];
+      const c = g[(y0 + 1) * gw + x0], d = g[(y0 + 1) * gw + x0 + 1];
+      out[y * w + x] = (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy;
+    }
+  }
+  return out;
+}
+
+function buildWorld(seed, style) {
+  const WW = 260, WH = 170;
+  const rnd = mulberry32(seed);
+  const img = new Float32Array(WW * WH);
+
+  // A smooth vertical gradient: the easy, flat part of the picture.
+  for (let y = 0; y < WH; y++)
+    for (let x = 0; x < WW; x++)
+      img[y * WW + x] = 70 + 90 * (y / WH) + 18 * Math.sin(x * 0.012 + y * 0.004);
+
+  // Low-frequency texture everywhere.
+  const n1 = valueNoise(rnd, WW, WH, 26);
+  for (let i = 0; i < img.length; i++) img[i] += (n1[i] - 0.5) * 55;
+
+  // A high-detail region: fine noise the transform cannot compact away.
+  const n2 = valueNoise(rnd, WW, WH, 3.4);
+  for (let y = 0; y < WH; y++)
+    for (let x = 0; x < WW; x++) {
+      const inDetail = style === 0
+        ? (x > WW * 0.52 && y > WH * 0.30)
+        : (x < WW * 0.46 && y > WH * 0.22);
+      if (inDetail) img[y * WW + x] += (n2[y * WW + x] - 0.5) * 62;
+    }
+
+  // Hard edges: structure with strong high-frequency content in one direction.
+  const bars = style === 0 ? 7 : 5;
+  for (let b = 0; b < bars; b++) {
+    const bx = 14 + Math.floor(rnd() * (WW - 60));
+    const by = 10 + Math.floor(rnd() * (WH - 50));
+    const bw = 10 + Math.floor(rnd() * 34), bh = 6 + Math.floor(rnd() * 30);
+    const v = rnd() > 0.5 ? 215 : 35;
+    for (let y = by; y < Math.min(WH, by + bh); y++)
+      for (let x = bx; x < Math.min(WW, bx + bw); x++) img[y * WW + x] = v;
+  }
+
+  const out = new Uint8ClampedArray(WW * WH);
+  for (let i = 0; i < img.length; i++) out[i] = img[i];
+  return { data: out, w: WW, h: WH };
+}
+
+const WORLD_A = buildWorld(1337, 0);
+const WORLD_B = buildWorld(90210, 1);
+
+// A disc with its own internal texture, so it is not merely a flat blob that
+// any prediction mode handles for free.
+function drawDisc(frame, cx, cy, r, phase) {
+  for (let y = Math.max(0, cy - r); y < Math.min(H, cy + r); y++)
+    for (let x = Math.max(0, cx - r); x < Math.min(W, cx + r); x++) {
+      const dx = x - cx, dy = y - cy;
+      if (dx * dx + dy * dy > r * r) continue;
+      const shade = 150 + 70 * Math.sin((dx * 0.55) + phase) * Math.cos(dy * 0.5);
+      frame[y * W + x] = Math.max(0, Math.min(255, shade));
+    }
+}
+
+const CUT_AT = 14;      // the scene cut: frame 14 belongs to a different shot
+const N_FRAMES = 24;
+
+// Camera pans right over world A, then after the cut, left over world B.
+function cameraFor(t) {
+  return t < CUT_AT
+    ? { world: WORLD_A, ox: 6 + t * 3, oy: 10 + Math.round(t * 0.8) }
+    : { world: WORLD_B, ox: 70 - (t - CUT_AT) * 3, oy: 40 + Math.round((t - CUT_AT) * 1.2) };
+}
+
+function makeFrame(t) {
+  const { world, ox, oy } = cameraFor(t);
+  const f = new Uint8ClampedArray(W * H);
+  for (let y = 0; y < H; y++) {
+    const sy = Math.min(world.h - 1, oy + y);
+    for (let x = 0; x < W; x++) f[y * W + x] = world.data[sy * world.w + Math.min(world.w - 1, ox + x)];
+  }
+  // Several objects, each with its own velocity. This matters: a macroblock that
+  // straddles two different motions cannot be predicted by a single vector, which
+  // is the entire reason codecs can split a block into smaller partitions.
+  if (t < CUT_AT) {
+    drawDisc(f, 26 + t * 4, 20 + t * 2, 12, t * 0.35);
+    drawDisc(f, 126 - t * 5, 62 - t, 10, 1.4 + t * 0.5);
+    drawDisc(f, 78 + Math.round(t * 1.5), 14 + t * 5, 7, 2.2 + t * 0.3);
+  } else {
+    drawDisc(f, 130 - (t - CUT_AT) * 5, 70 - (t - CUT_AT) * 2, 10, t * 0.4);
+    drawDisc(f, 30 + (t - CUT_AT) * 6, 30 + (t - CUT_AT) * 3, 8, 1.1 + t * 0.45);
+    drawDisc(f, 96, 66 - (t - CUT_AT) * 4, 7, 3.0 + t * 0.25);
+  }
+  return f;
+}
+
+const SHOT = [];
+for (let t = 0; t < N_FRAMES; t++) SHOT.push(makeFrame(t));
+
+/* ------------------------------------------------------- transform & quant --- */
+// Separable 8x8 DCT-II, the same transform family every block-based codec uses.
+const DCT_C = new Float32Array(64);
+for (let u = 0; u < 8; u++)
+  for (let x = 0; x < 8; x++)
+    DCT_C[u * 8 + x] = (u === 0 ? Math.SQRT1_2 : 1) * 0.5 * Math.cos(((2 * x + 1) * u * Math.PI) / 16);
+
+const _tmp = new Float32Array(64);
+
+function fdct8(src, dst) {
+  for (let y = 0; y < 8; y++)
+    for (let u = 0; u < 8; u++) {
+      let s = 0;
+      for (let x = 0; x < 8; x++) s += src[y * 8 + x] * DCT_C[u * 8 + x];
+      _tmp[y * 8 + u] = s;
+    }
+  for (let u = 0; u < 8; u++)
+    for (let v = 0; v < 8; v++) {
+      let s = 0;
+      for (let y = 0; y < 8; y++) s += _tmp[y * 8 + u] * DCT_C[v * 8 + y];
+      dst[v * 8 + u] = s;
+    }
+}
+
+function idct8(src, dst) {
+  for (let y = 0; y < 8; y++)
+    for (let x = 0; x < 8; x++) {
+      let s = 0;
+      for (let u = 0; u < 8; u++) s += src[y * 8 + u] * DCT_C[u * 8 + x];
+      _tmp[y * 8 + x] = s;
+    }
+  for (let x = 0; x < 8; x++)
+    for (let y = 0; y < 8; y++) {
+      let s = 0;
+      for (let v = 0; v < 8; v++) s += _tmp[v * 8 + x] * DCT_C[v * 8 + y];
+      dst[y * 8 + x] = s;
+    }
+}
+
+// H.264's step ladder: the step doubles every 6 QP, so QP is a logarithmic
+// control. This is why the quality/bitrate curve feels so non-linear.
+function qstep(qp) { return Math.pow(2, (qp - 4) / 6); }
+
+// Deadzone quantizer: values near zero are pulled to zero more aggressively
+// than rounding would. Real codecs do this; it is why detail vanishes first.
+// level = sign(c) * floor(|c|/q + f). With f = 1/3 anything below two thirds of
+// a step becomes exactly zero, which is where most of the compression comes from.
+const DEADZONE = 1 / 3;
+function quantize(c, q) {
+  const a = Math.floor(Math.abs(c) / q + DEADZONE);
+  return a === 0 ? 0 : (c < 0 ? -a : a);
+}
+
+/* --------------------------------------------------------- entropy coding --- */
+// Exp-Golomb: the codes H.264's CAVLC is built from. Short codes for small
+// numbers, longer for big ones. Not CABAC — see the fidelity note in the page.
+function ueBits(v) { return 2 * Math.floor(Math.log2(v + 1)) + 1; }
+function seBits(v) { return ueBits(v <= 0 ? -2 * v : 2 * v - 1); }
+
+const ZIGZAG = [
+  0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5,
+  12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
+  35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+  58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63];
+
+// Cost of one quantized block, run/level coded along the zigzag.
+function coefBits(levels) {
+  let last = -1;
+  for (let i = 63; i >= 0; i--) if (levels[ZIGZAG[i]] !== 0) { last = i; break; }
+  if (last < 0) return 1;                     // coded-block flag says "empty"
+  let bits = 1, run = 0;
+  for (let i = 0; i <= last; i++) {
+    const l = levels[ZIGZAG[i]];
+    if (l === 0) { run++; continue; }
+    bits += ueBits(run) + seBits(l);
+    run = 0;
+  }
+  return bits + 2;                            // end-of-block
+}
+
+/* ----------------------------------------------------------- block helpers --- */
+function getBlock(frame, x, y, out, w = W) {
+  for (let j = 0; j < 8; j++)
+    for (let i = 0; i < 8; i++) out[j * 8 + i] = frame[(y + j) * w + (x + i)];
+}
+
+function putBlock(frame, x, y, src, w = W) {
+  for (let j = 0; j < 8; j++)
+    for (let i = 0; i < 8; i++) {
+      const v = src[j * 8 + i];
+      frame[(y + j) * w + (x + i)] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+}
+
+const _res = new Float32Array(64), _coef = new Float32Array(64);
+const _deq = new Float32Array(64), _rec = new Float32Array(64);
+const _lev = new Int16Array(64);
+
+/* Code one 8x8 residual block. Returns {bits, sse} and writes the
+   reconstruction (prediction + decoded residual) into recon at (x,y). */
+function codeBlock(src, pred, q, recon, x, y) {
+  for (let i = 0; i < 64; i++) _res[i] = src[i] - pred[i];
+  fdct8(_res, _coef);
+  for (let i = 0; i < 64; i++) _lev[i] = quantize(_coef[i], q);
+  const bits = coefBits(_lev);
+  for (let i = 0; i < 64; i++) _deq[i] = _lev[i] * q;
+  idct8(_deq, _rec);
+  let sse = 0, nz = 0;
+  for (let i = 0; i < 64; i++) {
+    if (_lev[i] !== 0) nz++;
+    let v = pred[i] + _rec[i];
+    v = v < 0 ? 0 : v > 255 ? 255 : v;
+    _rec[i] = v;
+    const d = v - src[i];
+    sse += d * d;
+  }
+  if (recon) putBlock(recon, x, y, _rec);
+  return { bits, sse, nz, levels: Int16Array.from(_lev), coef: Float32Array.from(_coef) };
+}
+
+const ZERO64 = new Float32Array(64);
+
+/* ----------------------------------------------------------- intra modes --- */
+const INTRA_NAMES = ['DC', 'Vertical', 'Horizontal'];
+
+// Predict an 8x8 block from the already-reconstructed pixels above and left of
+// it. Unavailable neighbours fall back to 128, exactly as a real codec does.
+function intraPred(recon, x, y, mode, out) {
+  const haveTop = y >= 8, haveLeft = x >= 8;
+  const top = new Float32Array(8), left = new Float32Array(8);
+  for (let i = 0; i < 8; i++) {
+    top[i] = haveTop ? recon[(y - 1) * W + x + i] : 128;
+    left[i] = haveLeft ? recon[(y + i) * W + x - 1] : 128;
+  }
+  if (mode === 1) {                                   // vertical
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) out[j * 8 + i] = top[i];
+  } else if (mode === 2) {                            // horizontal
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) out[j * 8 + i] = left[j];
+  } else {                                            // DC
+    let s = 0;
+    for (let i = 0; i < 8; i++) s += top[i] + left[i];
+    const dc = s / 16;
+    for (let i = 0; i < 64; i++) out[i] = dc;
+  }
+}
+
+/* ------------------------------------------------- motion compensation --- */
+// Predict from the reconstructed reference, clamping at the picture edge.
+function mcBlock(ref, x, y, mvx, mvy, out, size = 8) {
+  for (let j = 0; j < size; j++) {
+    const sy = Math.max(0, Math.min(H - 1, y + j + mvy));
+    for (let i = 0; i < size; i++) {
+      const sx = Math.max(0, Math.min(W - 1, x + i + mvx));
+      out[j * size + i] = ref[sy * W + sx];
+    }
+  }
+}
+
+function sadAt(cur, ref, x, y, mvx, mvy, size) {
+  let s = 0;
+  for (let j = 0; j < size; j++) {
+    const sy = Math.max(0, Math.min(H - 1, y + j + mvy));
+    for (let i = 0; i < size; i++) {
+      const sx = Math.max(0, Math.min(W - 1, x + i + mvx));
+      s += Math.abs(cur[(y + j) * W + x + i] - ref[sy * W + sx]);
+    }
+  }
+  return s;
+}
+
+function mvBits(mvx, mvy, px, py) { return seBits(mvx - px) + seBits(mvy - py); }
+
+// Rate-constrained full search: minimise SAD + lambda_motion * mv bits. A plain
+// SAD search picks noisy vectors that cost more to transmit than they save.
+const SEARCH_RANGE = 8;
+function motionSearch(cur, ref, x, y, size, lamMot, px = 0, py = 0) {
+  let best = { mvx: px, mvy: py, cost: Infinity, sad: 0 };
+  for (let my = -SEARCH_RANGE; my <= SEARCH_RANGE; my++)
+    for (let mx = -SEARCH_RANGE; mx <= SEARCH_RANGE; mx++) {
+      const sad = sadAt(cur, ref, x, y, mx, my, size);
+      const cost = sad + lamMot * mvBits(mx, my, px, py);
+      if (cost < best.cost) best = { mvx: mx, mvy: my, cost, sad };
+    }
+  return best;
+}
+
+/* --------------------------------------------------------- lambda, PSNR --- */
+// The price of a bit, in units of squared error. Every mode decision in every
+// modern encoder is this one comparison: J = D + lambda * R.
+function lambdaFor(qp) { return 0.85 * Math.pow(2, (qp - 12) / 3); }
+function lambdaMotion(qp) { return Math.sqrt(lambdaFor(qp)); }
+
+function psnrOf(a, b) {
+  let sse = 0;
+  for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; sse += d * d; }
+  if (sse === 0) return 99;
+  return 10 * Math.log10((255 * 255 * a.length) / sse);
+}
+function sseOf(a, b) {
+  let sse = 0;
+  for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; sse += d * d; }
+  return sse;
+}
+
+/* ============================= frame encoders ============================ */
+
+/* Level 1-2: transform-only coding of a whole frame, no prediction at all.
+   Every block is coded against a flat 128 so the player sees the transform and
+   the quantizer by themselves, with nothing else helping. */
+function encodeTransformOnly(src, qp) {
+  const q = qstep(qp);
+  const recon = new Uint8ClampedArray(W * H);
+  const blk = new Float32Array(64);
+  const flat = new Float32Array(64).fill(128);
+  let bits = 0, nz = 0;
+  const blockInfo = [];
+  for (let by = 0; by < BH; by++)
+    for (let bx = 0; bx < BW; bx++) {
+      getBlock(src, bx * 8, by * 8, blk);
+      const r = codeBlock(blk, flat, q, recon, bx * 8, by * 8);
+      bits += r.bits; nz += r.nz;
+      blockInfo.push(r);
+    }
+  bits += 40;                                   // picture header
+  return { bits, recon, nz, blockInfo, psnr: psnrOf(src, recon) };
+}
+
+/* Level 2's control condition: throw away precision on the raw pixels instead
+   of on transform coefficients, coded with the identical entropy coder so the
+   comparison is fair. */
+function encodePixelDomain(src, step) {
+  const recon = new Uint8ClampedArray(W * H);
+  const lev = new Int16Array(64);
+  let bits = 0;
+  for (let by = 0; by < BH; by++)
+    for (let bx = 0; bx < BW; bx++) {
+      for (let j = 0; j < 8; j++)
+        for (let i = 0; i < 8; i++) {
+          const p = src[(by * 8 + j) * W + bx * 8 + i] - 128;
+          lev[j * 8 + i] = quantize(p, step);
+        }
+      bits += coefBits(lev);
+      for (let j = 0; j < 8; j++)
+        for (let i = 0; i < 8; i++)
+          recon[(by * 8 + j) * W + bx * 8 + i] = lev[j * 8 + i] * step + 128;
+    }
+  bits += 40;
+  return { bits, recon, psnr: psnrOf(src, recon) };
+}
+
+// Find the pixel-domain step that spends the same bits as the DCT path, so the
+// two pictures can be compared at matched cost rather than matched "setting".
+// The pixel-domain rate is not a smooth function of the step: past the point
+// where every pixel falls inside the deadzone, the cost collapses to nothing at
+// once. So keep the closest probe actually seen rather than trusting the search
+// to land on the target, and let the caller report the real figure either way.
+function matchPixelBits(src, targetBits) {
+  let lo = 0.5, hi = 3000, best = null, bestD = Infinity;
+  for (let it = 0; it < 26; it++) {
+    const mid = (lo + hi) / 2;
+    const r = encodePixelDomain(src, mid);
+    const d = Math.abs(r.bits - targetBits);
+    if (d < bestD) { bestD = d; best = r; }
+    if (r.bits > targetBits) lo = mid; else hi = mid;
+  }
+  return best;
+}
+
+/* Level 3: one 8x8 block, one prediction choice, everything exposed.
+   mode: {kind:'none'} | {kind:'intra', m:0|1|2} | {kind:'inter', mvx, mvy} */
+function codeOneBlock(src, recon, ref, bx, by, qp, mode) {
+  const q = qstep(qp);
+  const x = bx * 8, y = by * 8;
+  const blk = new Float32Array(64), pred = new Float32Array(64);
+  getBlock(src, x, y, blk);
+  let sideBits = 0;
+  if (mode.kind === 'none') { pred.fill(128); sideBits = 1; }
+  else if (mode.kind === 'intra') { intraPred(recon, x, y, mode.m, pred); sideBits = 1 + ueBits(mode.m); }
+  else { mcBlock(ref, x, y, mode.mvx, mode.mvy, pred); sideBits = 1 + mvBits(mode.mvx, mode.mvy, 0, 0); }
+  const r = codeBlock(blk, pred, q, null, x, y);
+  const resid = new Float32Array(64);
+  for (let i = 0; i < 64; i++) resid[i] = blk[i] - pred[i];
+  return { ...r, sideBits, total: r.bits + sideBits, pred, resid, src: blk };
+}
+
+/* Levels 5-7: the full encoder. Per macroblock it tries every mode it is
+   allowed and keeps the one with the lowest J = D + lambda*R. Prediction comes
+   from reconstructed references, so any error made here is inherited by every
+   frame that predicts from this one. That is error propagation, not a metaphor. */
+function encodeFrame(src, refs, opts) {
+  const qp = opts.qp;
+  const type = opts.type || 'I';
+  const q = qstep(qp);
+  const lam = opts.lambda !== undefined ? opts.lambda : lambdaFor(qp);
+  const lamMot = Math.sqrt(Math.max(0.01, lam));
+  const recon = new Uint8ClampedArray(W * H);
+  const blk = new Float32Array(64), pred = new Float32Array(64);
+  const perMB = [];
+  let coefBitsTotal = 0, mvBitsTotal = 0, modeBitsTotal = 0;
+  let predMVx = 0, predMVy = 0;
+
+  const ref0 = refs && refs[0], ref1 = refs && refs[1];
+
+  for (let my = 0; my < MBH; my++) {
+    predMVx = 0; predMVy = 0;
+    for (let mx = 0; mx < MBW; mx++) {
+      const X = mx * 16, Y = my * 16;
+      const forced = opts.forceSplit ? opts.forceSplit[my * MBW + mx] : undefined;
+      const candidates = [];
+
+      // --- intra, four 8x8 blocks, best mode each -------------------------
+      if (type === 'I' || opts.allowIntra !== false) {
+        candidates.push({ name: 'Intra', run: () => tryIntra(src, recon, X, Y, q, lam) });
+      }
+      // --- inter from the past reference ----------------------------------
+      if (ref0 && type !== 'I') {
+        candidates.push({ name: 'Skip', run: () => tryInter(src, [ref0], recon, X, Y, q, lam, 16, { fixed: [predMVx, predMVy], skip: true }) });
+        candidates.push({ name: 'Inter 16', run: () => tryInter(src, [ref0], recon, X, Y, q, lam, 16, { lamMot, predMVx, predMVy }) });
+        candidates.push({ name: 'Inter 8', run: () => tryInter(src, [ref0], recon, X, Y, q, lam, 8, { lamMot, predMVx, predMVy }) });
+      }
+      // --- bidirectional: average of a past and a future reference --------
+      if (ref1 && type === 'B') {
+        candidates.push({ name: 'Bi', run: () => tryInter(src, [ref0, ref1], recon, X, Y, q, lam, 16, { lamMot, predMVx, predMVy, bi: true }) });
+      }
+
+      let best = null;
+      for (const c of candidates) {
+        if (opts.only && !opts.only.includes(c.name)) continue;   // level restricts the menu
+        if (forced === 1 && c.name === 'Inter 16') continue;      // player forced a split
+        if (forced === 0 && c.name === 'Inter 8') continue;       // player forced no split
+        const r = c.run();
+        r.name = c.name;
+        if (!best || r.J < best.J) best = r;
+      }
+      if (!best) { best = tryIntra(src, recon, X, Y, q, lam); best.name = 'Intra'; }
+
+      // Commit the winner: write its reconstruction into the frame.
+      for (let b = 0; b < 4; b++) {
+        const ox = X + (b % 2) * 8, oy = Y + Math.floor(b / 2) * 8;
+        putBlock(recon, ox, oy, best.recons[b]);
+      }
+      coefBitsTotal += best.coefBits;
+      mvBitsTotal += best.mvBits;
+      modeBitsTotal += best.modeBits;
+      predMVx = best.mvx || 0; predMVy = best.mvy || 0;
+      perMB.push({
+        mx, my, mode: best.name, bits: best.coefBits + best.mvBits + best.modeBits,
+        coefBits: best.coefBits, mvBits: best.mvBits, modeBits: best.modeBits,
+        sse: best.sse, mvx: best.mvx || 0, mvy: best.mvy || 0, split: best.split || false,
+      });
+    }
+  }
+
+  const headerBits = 36;
+  const bits = coefBitsTotal + mvBitsTotal + modeBitsTotal + headerBits;
+  return {
+    bits, coefBits: coefBitsTotal, mvBits: mvBitsTotal, modeBits: modeBitsTotal,
+    headerBits, recon, perMB, type, qp,
+    psnr: psnrOf(src, recon), sse: sseOf(src, recon),
+  };
+}
+
+function tryIntra(src, recon, X, Y, q, lam) {
+  const blk = new Float32Array(64), pred = new Float32Array(64);
+  const recons = [], scratch = Uint8ClampedArray.from(recon);
+  let coefB = 0, modeB = 1, sse = 0;
+  for (let b = 0; b < 4; b++) {
+    const ox = X + (b % 2) * 8, oy = Y + Math.floor(b / 2) * 8;
+    getBlock(src, ox, oy, blk);
+    let bestB = null;
+    for (let m = 0; m < 3; m++) {
+      intraPred(scratch, ox, oy, m, pred);
+      const r = codeBlock(blk, pred, q, null, ox, oy);
+      const J = r.sse + lam * (r.bits + ueBits(m));
+      if (!bestB || J < bestB.J) bestB = { J, m, r, rec: Float32Array.from(_rec) };
+    }
+    coefB += bestB.r.bits; modeB += ueBits(bestB.m); sse += bestB.r.sse;
+    recons.push(bestB.rec);
+    putBlock(scratch, ox, oy, bestB.rec);     // later blocks predict from earlier ones
+  }
+  return { J: sse + lam * (coefB + modeB), coefBits: coefB, mvBits: 0, modeBits: modeB, sse, recons };
+}
+
+function tryInter(src, refs, recon, X, Y, q, lam, size, o) {
+  const blk = new Float32Array(64), pred = new Float32Array(64);
+  const big = new Float32Array(size * size);
+  const recons = [null, null, null, null];
+  let coefB = 0, mvB = 0, modeB = 1, sse = 0, mvx = 0, mvy = 0;
+
+  const searchOne = (ref, x, y, sz) => o.fixed
+    ? { mvx: o.fixed[0], mvy: o.fixed[1] }
+    : motionSearch(src, ref, x, y, sz, o.lamMot, o.predMVx, o.predMVy);
+
+  if (size === 16) {
+    const m0 = searchOne(refs[0], X, Y, 16);
+    mvx = m0.mvx; mvy = m0.mvy;
+    let m1 = null;
+    if (o.bi && refs[1]) m1 = motionSearch(src, refs[1], X, Y, 16, o.lamMot, 0, 0);
+    if (!o.skip) mvB += mvBits(mvx, mvy, o.predMVx || 0, o.predMVy || 0);
+    if (m1) mvB += mvBits(m1.mvx, m1.mvy, 0, 0);
+    for (let b = 0; b < 4; b++) {
+      const ox = X + (b % 2) * 8, oy = Y + Math.floor(b / 2) * 8;
+      getBlock(src, ox, oy, blk);
+      mcBlock(refs[0], ox, oy, mvx, mvy, pred);
+      if (m1) {
+        const p2 = new Float32Array(64);
+        mcBlock(refs[1], ox, oy, m1.mvx, m1.mvy, p2);
+        for (let i = 0; i < 64; i++) pred[i] = (pred[i] + p2[i]) / 2;
+      }
+      if (o.skip) {
+        // Skip sends no residual at all: the prediction *is* the reconstruction.
+        let s = 0;
+        for (let i = 0; i < 64; i++) { const d = pred[i] - blk[i]; s += d * d; }
+        sse += s; recons[b] = Float32Array.from(pred);
+      } else {
+        const r = codeBlock(blk, pred, q, null, ox, oy);
+        coefB += r.bits; sse += r.sse; recons[b] = Float32Array.from(_rec);
+      }
+    }
+    if (o.skip) modeB = 1;
+  } else {
+    // Four independent 8x8 vectors: more accurate, four times the side info.
+    for (let b = 0; b < 4; b++) {
+      const ox = X + (b % 2) * 8, oy = Y + Math.floor(b / 2) * 8;
+      const m = motionSearch(src, refs[0], ox, oy, 8, o.lamMot, o.predMVx, o.predMVy);
+      mvB += mvBits(m.mvx, m.mvy, o.predMVx || 0, o.predMVy || 0);
+      getBlock(src, ox, oy, blk);
+      mcBlock(refs[0], ox, oy, m.mvx, m.mvy, pred);
+      const r = codeBlock(blk, pred, q, null, ox, oy);
+      coefB += r.bits; sse += r.sse; recons[b] = Float32Array.from(_rec);
+      if (b === 0) { mvx = m.mvx; mvy = m.mvy; }
+    }
+    modeB = 2;
+  }
+  return {
+    J: sse + lam * (coefB + mvB + modeB),
+    coefBits: coefB, mvBits: mvB, modeBits: modeB, sse, recons, mvx, mvy,
+    split: size === 8,
+  };
+}
+
+/* ============================================================================
+   game.js — the seven levels.
+
+   Every readout in here is produced by engine.js actually encoding something.
+   No level fabricates a number to make a bar move.
+   ========================================================================= */
+
+const $ = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------- rendering --- */
+function putGray(cv, data) {
+  const ctx = cv.getContext('2d');
+  const im = ctx.createImageData(cv.width, cv.height);
+  for (let i = 0, j = 0; i < data.length; i++, j += 4) {
+    const v = data[i];
+    im.data[j] = im.data[j + 1] = im.data[j + 2] = v;
+    im.data[j + 3] = 255;
+  }
+  ctx.putImageData(im, 0, 0);
+}
+
+// A residual is signed. Mid-grey means "the guess was right", and a residual
+// that is flat grey all over costs essentially nothing to transmit.
+function putSigned(cv, data, gain = 1.6) {
+  const ctx = cv.getContext('2d');
+  const im = ctx.createImageData(cv.width, cv.height);
+  for (let i = 0, j = 0; i < data.length; i++, j += 4) {
+    const v = Math.max(0, Math.min(255, 128 + data[i] * gain));
+    im.data[j] = im.data[j + 1] = im.data[j + 2] = v;
+    im.data[j + 3] = 255;
+  }
+  ctx.putImageData(im, 0, 0);
+}
+
+// Error heat: white where the decoder got it right, deepening orange-red where
+// the quantizer threw the picture away.
+function putHeat(cv, a, b, gain = 7) {
+  const ctx = cv.getContext('2d');
+  const im = ctx.createImageData(cv.width, cv.height);
+  for (let i = 0, j = 0; i < a.length; i++, j += 4) {
+    const d = Math.min(255, Math.abs(a[i] - b[i]) * gain);
+    im.data[j] = 255;
+    im.data[j + 1] = 255 - d * 0.75;
+    im.data[j + 2] = 255 - d;
+    im.data[j + 3] = 255;
+  }
+  ctx.putImageData(im, 0, 0);
+}
+
+function box(cv, x, y, w, h, color, width = 1) {
+  const ctx = cv.getContext('2d');
+  ctx.strokeStyle = color; ctx.lineWidth = width;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+}
+
+function svgEl(name, attrs, text) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+// Clear only the dedicated layer. Clearing the <svg> itself would delete the
+// <title> that aria-labelledby points at and strip the figure's accessible name.
+function clearLayer(id) {
+  const g = $(id);
+  while (g.firstChild) g.removeChild(g.firstChild);
+  return g;
+}
+
+const fmt = (n) => n.toLocaleString('en-US');
+
+/* ------------------------------------------------- prediction-hook helper --- */
+// Commitment before reveal: the option is locked the moment it is chosen, and
+// the verdict is only then written. Re-guessing after seeing the answer would
+// make the whole beat worthless.
+function predictHook(rootId, correct, verdicts, onCommit) {
+  const root = $(rootId);
+  const buttons = [...root.querySelectorAll('.opts button')];
+  const out = root.querySelector('.verdict');
+  buttons.forEach((b) => b.addEventListener('click', () => {
+    if (root.dataset.done === '1') return;
+    root.dataset.done = '1';
+    buttons.forEach((x) => { x.setAttribute('aria-pressed', String(x === b)); x.disabled = x !== b; });
+    const v = b.dataset.v;
+    out.innerHTML = (v === correct ? '<strong>Right.</strong> ' : '<strong>Not quite.</strong> ')
+      + verdicts[v];
+    out.style.color = v === correct ? 'var(--quality)' : 'var(--bad)';
+    if (onCommit) onCommit(v, v === correct);
+  }));
+}
+
+/* ------------------------------------------------- shared reference chain --- */
+// Levels 3-6 need a believable decoded history to predict from. Build it once,
+// the same way a real encoder would: every frame predicts from the previous
+// *reconstruction*, never from the original.
+const CHAIN_QP = 28;
+const chain = [];
+{
+  let prev = null;
+  for (let t = 0; t < 8; t++) {
+    const r = encodeFrame(SHOT[t], prev ? [prev] : null, { qp: CHAIN_QP, type: t === 0 ? 'I' : 'P' });
+    chain.push(r.recon);
+    prev = r.recon;
+  }
+}
+
+/* ========================================================================== */
+/* LEVEL 1 — the quantizer                                                    */
+/* ========================================================================== */
+(function level1() {
+  const L1_BITS = 7000, L1_PSNR = 33.5;
+  const st = { qp: 26, tries: 3, done: false, last: null };
+  const cache = new Map();
+  const run = (qp) => {
+    if (!cache.has(qp)) cache.set(qp, encodeTransformOnly(SHOT[0], qp));
+    return cache.get(qp);
+  };
+
+  putGray($('l1-src'), SHOT[0]);
+
+  // One representative block, drawn as its quantized coefficient magnitudes:
+  // the player can watch the high frequencies (bottom-right) die off first.
+  const COEF_BLOCK = 7 * BW + 5;
+  function drawCoefs(info) {
+    const cv = $('l1-coef'), ctx = cv.getContext('2d');
+    const im = ctx.createImageData(8, 8);
+    const lv = info.levels;
+    let peak = 1;
+    for (let i = 0; i < 64; i++) peak = Math.max(peak, Math.abs(lv[i]));
+    for (let i = 0, j = 0; i < 64; i++, j += 4) {
+      const m = Math.abs(lv[i]);
+      const v = m === 0 ? 24 : 70 + 185 * Math.sqrt(m / peak);
+      im.data[j] = v; im.data[j + 1] = m === 0 ? 24 : v * 0.92; im.data[j + 2] = m === 0 ? 30 : v * 0.6;
+      im.data[j + 3] = 255;
+    }
+    ctx.putImageData(im, 0, 0);
+  }
+
+  function render() {
+    const r = run(st.qp);
+    st.last = r;
+    putGray($('l1-rec'), r.recon);
+    putHeat($('l1-err'), SHOT[0], r.recon);
+    drawCoefs(r.blockInfo[COEF_BLOCK]);
+    $('l1-qp-val').textContent = st.qp;
+    $('l1-step').textContent = qstep(st.qp).toFixed(1);
+    $('l1-bits').textContent = fmt(r.bits);
+    $('l1-psnr').textContent = r.psnr.toFixed(1);
+    const zeroed = r.blockInfo.reduce((a, b) => a + (64 - b.nz), 0);
+    $('l1-zero').textContent = Math.round((100 * zeroed) / (r.blockInfo.length * 64)) + '%';
+    $('l1-tries').textContent = st.tries;
+  }
+
+  $('l1-qp').addEventListener('input', (e) => { st.qp = +e.target.value; render(); });
+
+  $('l1-commit').addEventListener('click', () => {
+    if (st.done) return;
+    const r = st.last;
+    st.tries -= 1;
+    const ok = r.bits <= L1_BITS && r.psnr >= L1_PSNR;
+    const m = $('l1-msg');
+    if (ok) {
+      st.done = true;
+      m.className = 'msg ok';
+      m.textContent = `Sent. ${fmt(r.bits)} bits at ${r.psnr.toFixed(1)} dB — inside both limits. `
+        + `Notice how narrow that window was: one or two QP values out of twenty-nine.`;
+      $('l1-commit').disabled = true;
+    } else if (st.tries <= 0) {
+      m.className = 'msg no';
+      m.textContent = `Out of commits — level lost. ${fmt(r.bits)} bits at ${r.psnr.toFixed(1)} dB. `
+        + (r.bits > L1_BITS ? 'Too many bits. ' : 'Quality too low. ')
+        + 'Reload the page to try the shot again.';
+      $('l1-commit').disabled = true;
+      $('l1-qp').disabled = true;
+    } else {
+      m.className = 'msg no';
+      m.textContent = r.bits > L1_BITS
+        ? `${fmt(r.bits)} bits — over budget by ${fmt(r.bits - L1_BITS)}. Raise QP.`
+        : `${r.psnr.toFixed(1)} dB — below the quality floor. Lower QP.`;
+    }
+    render();
+  });
+
+  predictHook('l1-predict', 'b', {
+    a: 'The step doubles every six QP, so twelve QP is a factor of four in step size. '
+      + 'That is not a nudge. Drag the slider from 24 to 36 and read the quality figure.',
+    b: 'Around 10 dB — roughly 43.5 down to 33.9 here. Halving the file is never cheap, '
+      + 'and the cost is not linear in QP: the step size is exponential in it.',
+    c: 'Less than that. 25 dB would be unwatchable; the picture at QP 36 is degraded but still legible. '
+      + 'The real figure is about 10 dB.',
+  });
+
+  render();
+})();
+
+/* ========================================================================== */
+/* LEVEL 2 — the transform                                                    */
+/* ========================================================================== */
+(function level2() {
+  // Find the QP that spends closest to a requested budget, then give the
+  // pixel-domain path exactly the same number of bits to work with.
+  const ladder = [];
+  for (let qp = 14; qp <= 50; qp++) ladder.push({ qp, r: encodeTransformOnly(SHOT[0], qp) });
+  const pixCache = new Map();
+  function qpForBudget(budget) {
+    return ladder.reduce((a, b) =>
+      Math.abs(b.r.bits - budget) < Math.abs(a.r.bits - budget) ? b : a).qp;
+  }
+
+  function run() {
+    const budget = +$('l2-budget').value;
+    const qp = qpForBudget(budget);
+    const dct = ladder.find((l) => l.qp === qp).r;
+    if (!pixCache.has(qp)) pixCache.set(qp, matchPixelBits(SHOT[0], dct.bits));
+    const px = pixCache.get(qp);
+    putGray($('l2-dct'), dct.recon);
+    putGray($('l2-px'), px.recon);
+    $('l2-dct-r').textContent = `${fmt(dct.bits)} bits, ${dct.psnr.toFixed(1)} dB`;
+    $('l2-px-r').textContent = `${fmt(px.bits)} bits, ${px.psnr.toFixed(1)} dB`;
+    const gap = dct.psnr - px.psnr;
+    const extra = px.bits - dct.bits;
+    $('l2-msg').className = 'msg ok';
+    // Report what actually happened. Below about 8,000 bits the pixel path cannot
+    // be squeezed to match at all — every pixel falls inside the deadzone at once —
+    // so it ends up spending *more* and still losing, which is the better lesson.
+    $('l2-msg').textContent = Math.abs(extra) > dct.bits * 0.05
+      ? `The pixel path has no setting that lands exactly here, so it spent ${fmt(px.bits)} bits `
+        + `against the transform path's ${fmt(dct.bits)} — and still came out ${gap.toFixed(1)} dB worse.`
+      : `Same coder, same quantizer, ${fmt(dct.bits)} against ${fmt(px.bits)} bits. `
+        + `The transform is worth ${gap.toFixed(1)} dB. Drag the budget — the gap survives everywhere.`;
+  }
+
+  predictHook('l2-predict', 'c', {
+    a: 'Run it. The transform does not move information around for tidiness; it changes '
+      + 'how many numbers you need to describe the block at all.',
+    b: 'Bigger than that, and the reason is worth sitting with.',
+    c: 'Around 17 dB at the default budget, which is the difference between "compressed" and "ruined". '
+      + 'A natural block is smooth, so in the DCT domain almost all of its energy lands in a '
+      + 'few low-frequency coefficients and the other sixty quantize to exactly zero — free. '
+      + 'In the pixel domain all 64 numbers matter equally, so the same budget buys 64 crude '
+      + 'values instead of 6 precise ones.',
+  }, () => {
+    $('l2-run').disabled = false;
+    $('l2-budget').disabled = false;
+    $('l2-msg').className = 'msg';
+    $('l2-msg').textContent = 'Guess locked. Run it.';
+  });
+
+  $('l2-run').addEventListener('click', run);
+  $('l2-budget').addEventListener('input', (e) => {
+    $('l2-budget-val').textContent = fmt(+e.target.value);
+    if ($('l2-predict').dataset.done === '1') run();
+  });
+})();
+
+/* ========================================================================== */
+/* LEVEL 3 — prediction                                                       */
+/* ========================================================================== */
+(function level3() {
+  const BUDGET = 330, FRAME = 1, QP = 28;
+  const src = SHOT[FRAME];
+  const ref = chain[FRAME - 1];
+  // Intra prediction must read decoded neighbours *of this frame*. Coding the
+  // frame intra-only once gives those neighbours honestly, instead of quietly
+  // handing intra the previous frame's pixels, which would be a different mode.
+  const recon = encodeFrame(src, null, { qp: QP, type: 'I' }).recon;
+  const MODES = {
+    none: { kind: 'none' }, dc: { kind: 'intra', m: 0 },
+    v: { kind: 'intra', m: 1 }, h: { kind: 'intra', m: 2 },
+    inter: { kind: 'inter', mvx: 0, mvy: 0 },
+  };
+  const MODE_KEYS = Object.keys(MODES);
+
+  // Choose five blocks that genuinely disagree about what they want, so the
+  // level cannot be beaten by picking one mode and sticking to it.
+  function pickBlocks() {
+    const byWinner = {};
+    for (let by = 1; by < BH - 1; by++)
+      for (let bx = 1; bx < BW - 1; bx++) {
+        let best = null, baseline = 0;
+        for (const k of MODE_KEYS) {
+          const r = codeOneBlock(src, recon, ref, bx, by, QP, MODES[k]);
+          const J = r.sse + lambdaFor(QP) * r.total;
+          if (k === 'none') baseline = r.total;
+          if (!best || J < best.J) best = { J, k, total: r.total };
+        }
+        const margin = baseline - best.total;
+        if (!byWinner[best.k] || margin > byWinner[best.k].margin)
+          byWinner[best.k] = { bx, by, margin, k: best.k };
+      }
+    const picks = [];
+    for (const k of ['v', 'h', 'inter', 'dc', 'none']) if (byWinner[k]) picks.push(byWinner[k]);
+    // Top up from whatever had the strongest preference if a mode never won.
+    while (picks.length < 5) {
+      const extra = Object.values(byWinner).sort((a, b) => b.margin - a.margin)[picks.length % 3];
+      picks.push({ ...extra, bx: extra.bx, by: Math.min(BH - 2, extra.by + picks.length) });
+    }
+    return picks.slice(0, 5);
+  }
+
+  const blocks = pickBlocks().map((b, i) => ({ ...b, i, committed: null }));
+  const st = { sel: 0, spent: 0, lost: false };
+
+  const sel = $('l3-block');
+  blocks.forEach((b, i) => sel.appendChild(new Option(`Block ${i + 1} — at (${b.bx * 8}, ${b.by * 8})`, String(i))));
+
+  function drawFrame() {
+    putGray($('l3-frame'), src);
+    blocks.forEach((b, i) => {
+      const colour = b.committed ? '#2f7a52' : (i === st.sel ? '#2f6f9f' : '#b4541e');
+      box($('l3-frame'), b.bx * 8 - 1, b.by * 8 - 1, 10, 10, colour, 1);
+    });
+  }
+
+  function render() {
+    const b = blocks[st.sel];
+    const mode = b.committed || $('l3-mode').value;
+    const r = codeOneBlock(src, recon, ref, b.bx, b.by, QP, MODES[mode]);
+    putSigned($('l3-b-res'), r.resid, 1.8);
+    putGray($('l3-b-src'), Uint8ClampedArray.from(r.src));
+    putGray($('l3-b-pred'), Uint8ClampedArray.from(r.pred));
+    putGray($('l3-b-rec'), reconOf(r));
+    $('l3-bits').textContent = r.total;
+    let energy = 0; for (let i = 0; i < 64; i++) energy += r.resid[i] * r.resid[i];
+    $('l3-err').textContent = Math.round(Math.sqrt(energy / 64));
+    $('l3-total').textContent = st.spent;
+    $('l3-done').textContent = `${blocks.filter((x) => x.committed).length}/5`;
+    $('l3-commit').disabled = !!b.committed || st.lost;
+    $('l3-mode').disabled = !!b.committed || st.lost;
+    if (b.committed) $('l3-mode').value = b.committed;
+    drawFrame();
+  }
+
+  // prediction + the *decoded* residual: exactly what the viewer gets back.
+  function reconOf(r) {
+    const q = qstep(QP);
+    const res = new Float32Array(64), coef = new Float32Array(64);
+    const deq = new Float32Array(64), dec = new Float32Array(64);
+    for (let i = 0; i < 64; i++) res[i] = r.src[i] - r.pred[i];
+    fdct8(res, coef);
+    for (let i = 0; i < 64; i++) deq[i] = quantize(coef[i], q) * q;
+    idct8(deq, dec);
+    const out = new Uint8ClampedArray(64);
+    for (let i = 0; i < 64; i++) out[i] = r.pred[i] + dec[i];
+    return out;
+  }
+
+  putGray($('l3-prev'), ref);
+  sel.addEventListener('change', (e) => { st.sel = +e.target.value; render(); });
+  $('l3-mode').addEventListener('change', render);
+  $('l3-frame').addEventListener('click', (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * W, y = ((e.clientY - rect.top) / rect.height) * H;
+    let bestI = -1, bestD = 14;
+    blocks.forEach((b, i) => {
+      const d = Math.hypot(x - (b.bx * 8 + 4), y - (b.by * 8 + 4));
+      if (d < bestD) { bestD = d; bestI = i; }
+    });
+    if (bestI >= 0) { st.sel = bestI; sel.value = String(bestI); render(); }
+  });
+
+  $('l3-commit').addEventListener('click', () => {
+    const b = blocks[st.sel];
+    if (b.committed || st.lost) return;
+    const mode = $('l3-mode').value;
+    const r = codeOneBlock(src, recon, ref, b.bx, b.by, QP, MODES[mode]);
+    b.committed = mode;
+    st.spent += r.total;
+    const left = blocks.filter((x) => !x.committed);
+    const m = $('l3-msg');
+    if (st.spent > BUDGET) {
+      st.lost = true;
+      m.className = 'msg no';
+      m.textContent = `Over budget at ${st.spent} bits. Level lost — reload to retry. `
+        + `The block that hurt you was probably one where the previous frame had already moved on.`;
+    } else if (left.length === 0) {
+      m.className = 'msg ok';
+      m.textContent = `All five committed for ${st.spent} bits. Every block wanted a different guess — `
+        + `that is why mode decision is per block, not per frame.`;
+    } else {
+      m.className = 'msg';
+      m.textContent = `Committed at ${r.total} bits. ${st.spent} spent, ${BUDGET - st.spent} left for ${left.length} block(s).`;
+      st.sel = left[0].i; sel.value = String(st.sel);
+    }
+    render();
+  });
+
+  render();
+})();
+
+/* ========================================================================== */
+/* LEVEL 4 — motion                                                           */
+/* ========================================================================== */
+(function level4() {
+  const BUDGET = 230, FRAME = 5, QP = 28;
+  const src = SHOT[FRAME], ref = chain[FRAME - 1];
+
+  // Four blocks: three where motion compensation earns its keep, and one that the
+  // previous frame already predicts perfectly without moving — where any vector the
+  // player dials in is pure cost. That fourth block is the point of the level.
+  function pick() {
+    const scored = [];
+    for (let by = 1; by < BH - 1; by++)
+      for (let bx = 1; bx < BW - 1; bx++) {
+        const z = sadAt(src, ref, bx * 8, by * 8, 0, 0, 8);
+        const best = motionSearch(src, ref, bx * 8, by * 8, 8, 0);
+        const zeroCost = codeOneBlock(src, ref, ref, bx, by, QP, { kind: 'inter', mvx: 0, mvy: 0 }).total;
+        scored.push({ bx, by, gain: z - best.sad, zeroCost, mv: [best.mvx, best.mvy] });
+      }
+    const movers = scored.filter((s) => s.gain > 260)
+      .sort((a, b) => b.gain - a.gain);
+    const chosen = [];
+    for (const m of movers) {
+      if (chosen.every((c) => Math.hypot(c.bx - m.bx, c.by - m.by) > 3)
+        && chosen.every((c) => Math.hypot(c.mv[0] - m.mv[0], c.mv[1] - m.mv[1]) > 1.5)) chosen.push(m);
+      if (chosen.length === 3) break;
+    }
+    while (chosen.length < 3) chosen.push(movers[chosen.length] || scored[0]);
+    // The block the past frame already nails: standing still is already almost free,
+    // so every bit of motion vector the player spends here buys nothing.
+    const settled = scored.filter((s) => chosen.every((c) => Math.hypot(c.bx - s.bx, c.by - s.by) > 3))
+      .sort((a, b) => a.zeroCost - b.zeroCost)[0] || scored[0];
+    chosen.push(settled);
+    return chosen;
+  }
+
+  const blocks = pick().map((b, i) => ({ ...b, i, committed: null }));
+  const st = { sel: 0, spent: 0, lost: false, mvx: 0, mvy: 0 };
+
+  const sel = $('l4-block');
+  blocks.forEach((b, i) => sel.appendChild(new Option(`Block ${i + 1} — at (${b.bx * 8}, ${b.by * 8})`, String(i))));
+
+  function bar(resBits, mvBitsN) {
+    const g = clearLayer('l4-bar-layer');
+    const total = resBits + mvBitsN;
+    const scale = 170 / Math.max(60, total);
+    g.appendChild(svgEl('rect', { x: 15, y: 30, width: Math.max(1, resBits * scale), height: 22, fill: 'var(--bits)' }));
+    g.appendChild(svgEl('rect', { x: 15 + resBits * scale, y: 30, width: Math.max(1, mvBitsN * scale), height: 22, fill: 'var(--mv)' }));
+    g.appendChild(svgEl('text', { x: 15, y: 24, 'font-size': 11, fill: '#6a6a5e', 'font-family': 'ui-sans-serif,system-ui,sans-serif' }, `${total} bits total`));
+    g.appendChild(svgEl('text', { x: 15, y: 70, 'font-size': 10, fill: 'var(--bits)', 'font-family': 'ui-sans-serif,system-ui,sans-serif' }, `residual ${resBits}`));
+    g.appendChild(svgEl('text', { x: 15, y: 86, 'font-size': 10, fill: 'var(--mv)', 'font-family': 'ui-sans-serif,system-ui,sans-serif' }, `vector ${mvBitsN}`));
+  }
+
+  function render() {
+    const b = blocks[st.sel];
+    const mv = b.committed || { mvx: st.mvx, mvy: st.mvy };
+    const r = codeOneBlock(src, chain[FRAME - 1], ref, b.bx, b.by, QP, { kind: 'inter', mvx: mv.mvx, mvy: mv.mvy });
+    putGray($('l4-frame'), src);
+    blocks.forEach((x, i) => box($('l4-frame'), x.bx * 8 - 1, x.by * 8 - 1, 10, 10,
+      x.committed ? '#2f7a52' : (i === st.sel ? '#2f6f9f' : '#b4541e')));
+    putGray($('l4-ref'), ref);
+    box($('l4-ref'), b.bx * 8 + mv.mvx, b.by * 8 + mv.mvy, 8, 8, '#7a4fa3', 1);
+    box($('l4-ref'), b.bx * 8 - SEARCH_RANGE, b.by * 8 - SEARCH_RANGE, 8 + 2 * SEARCH_RANGE, 8 + 2 * SEARCH_RANGE, '#9a9a8c', 1);
+    putGray($('l4-b-src'), Uint8ClampedArray.from(r.src));
+    putGray($('l4-b-pred'), Uint8ClampedArray.from(r.pred));
+    putSigned($('l4-b-res'), r.resid, 1.8);
+    const sad = sadAt(src, ref, b.bx * 8, b.by * 8, mv.mvx, mv.mvy, 8);
+    const mb = r.sideBits;
+    $('l4-sad').textContent = fmt(sad);
+    $('l4-rbits').textContent = r.bits;
+    $('l4-mbits').textContent = mb;
+    $('l4-total').textContent = st.spent;
+    $('l4-done').textContent = `${blocks.filter((x) => x.committed).length}/4`;
+    bar(r.bits, mb);
+    $('l4-mvx-val').textContent = mv.mvx;
+    $('l4-mvy-val').textContent = mv.mvy;
+    $('l4-commit').disabled = !!b.committed || st.lost;
+    $('l4-mvx').disabled = !!b.committed || st.lost;
+    $('l4-mvy').disabled = !!b.committed || st.lost;
+  }
+
+  $('l4-mvx').addEventListener('input', (e) => { st.mvx = +e.target.value; render(); });
+  $('l4-mvy').addEventListener('input', (e) => { st.mvy = +e.target.value; render(); });
+  sel.addEventListener('change', (e) => {
+    st.sel = +e.target.value;
+    const b = blocks[st.sel];
+    st.mvx = b.committed ? b.committed.mvx : 0; st.mvy = b.committed ? b.committed.mvy : 0;
+    $('l4-mvx').value = st.mvx; $('l4-mvy').value = st.mvy;
+    render();
+  });
+
+  $('l4-commit').addEventListener('click', () => {
+    const b = blocks[st.sel];
+    if (b.committed || st.lost) return;
+    const r = codeOneBlock(src, chain[FRAME - 1], ref, b.bx, b.by, QP, { kind: 'inter', mvx: st.mvx, mvy: st.mvy });
+    b.committed = { mvx: st.mvx, mvy: st.mvy };
+    st.spent += r.total;
+    const zero = codeOneBlock(src, chain[FRAME - 1], ref, b.bx, b.by, QP, { kind: 'inter', mvx: 0, mvy: 0 });
+    const left = blocks.filter((x) => !x.committed);
+    const m = $('l4-msg');
+    if (st.spent > BUDGET) {
+      st.lost = true; m.className = 'msg no';
+      m.textContent = `Over budget at ${st.spent} bits — level lost. Reload to retry.`;
+    } else if (left.length === 0) {
+      m.className = 'msg ok';
+      m.textContent = `Shot coded for ${st.spent} bits. The encoder's own search minimises `
+        + `SAD + λ·(vector bits), not SAD — which is why its vectors are sometimes "worse" and cheaper.`;
+    } else {
+      m.className = 'msg';
+      const delta = zero.total - r.total;
+      m.textContent = delta > 0
+        ? `Committed: ${r.total} bits, ${delta} fewer than standing still. ${BUDGET - st.spent} left.`
+        : `Committed: ${r.total} bits — that vector cost you ${-delta} bits more than a vector of zero would have. `
+          + `A perfect match is not worth paying for when there was nothing to fix. ${BUDGET - st.spent} left.`;
+      st.sel = left[0].i; sel.value = String(st.sel);
+      st.mvx = 0; st.mvy = 0; $('l4-mvx').value = 0; $('l4-mvy').value = 0;
+    }
+    render();
+  });
+
+  render();
+})();
+
+/* ========================================================================== */
+/* LEVEL 5 — partitioning                                                     */
+/* ========================================================================== */
+(function level5() {
+  const FRAME = 5, QP = 26, ONLY = ['Inter 16', 'Inter 8'];
+  const src = SHOT[FRAME], ref = chain[FRAME - 1];
+  const n = MBW * MBH;
+  const st = { split: new Array(n).fill(0), tries: 3, done: false, reveal: null };
+
+  const baseNo = encodeFrame(src, [ref], { qp: QP, type: 'P', only: ONLY, forceSplit: new Array(n).fill(0) });
+  const optimal = encodeFrame(src, [ref], { qp: QP, type: 'P', only: ONLY });
+
+  function draw() {
+    const cv = $('l5-frame');
+    putGray(cv, src);
+    const ctx = cv.getContext('2d');
+    ctx.globalAlpha = 0.9;
+    for (let i = 0; i < n; i++) {
+      const mx = i % MBW, my = (i / MBW) | 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+      ctx.strokeRect(mx * 16 + 0.5, my * 16 + 0.5, 15, 15);
+      if (st.reveal && st.reveal[i]) {
+        ctx.strokeStyle = '#9a9a8c'; ctx.lineWidth = 2;
+        ctx.strokeRect(mx * 16 + 2, my * 16 + 2, 12, 12);
+      }
+      if (st.split[i]) {
+        ctx.strokeStyle = '#2f6f9f'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(mx * 16 + 8.5, my * 16 + 1); ctx.lineTo(mx * 16 + 8.5, my * 16 + 15);
+        ctx.moveTo(mx * 16 + 1, my * 16 + 8.5); ctx.lineTo(mx * 16 + 15, my * 16 + 8.5);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    $('l5-split').textContent = st.split.reduce((a, b) => a + b, 0);
+    $('l5-tries').textContent = st.tries;
+  }
+
+  $('l5-frame').addEventListener('click', (e) => {
+    if (st.done || st.tries <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mx = Math.floor((((e.clientX - rect.left) / rect.width) * W) / 16);
+    const my = Math.floor((((e.clientY - rect.top) / rect.height) * H) / 16);
+    if (mx < 0 || my < 0 || mx >= MBW || my >= MBH) return;
+    const i = my * MBW + mx;
+    st.split[i] = st.split[i] ? 0 : 1;
+    draw();
+  });
+
+  $('l5-none').addEventListener('click', () => { st.split.fill(0); draw(); });
+  $('l5-all').addEventListener('click', () => { st.split.fill(1); draw(); });
+
+  $('l5-run').addEventListener('click', () => {
+    if (st.done || st.tries <= 0) return;
+    st.tries -= 1;
+    const r = encodeFrame(src, [ref], { qp: QP, type: 'P', only: ONLY, forceSplit: st.split.slice() });
+    $('l5-bits').textContent = fmt(r.bits);
+    $('l5-mv').textContent = fmt(r.mvBits);
+    $('l5-psnr').textContent = r.psnr.toFixed(2);
+    const m = $('l5-msg');
+    const beat = r.bits < baseNo.bits && r.psnr > baseNo.psnr;
+    const allSplit = st.split.every((x) => x === 1);
+    if (beat) {
+      st.done = true;
+      st.reveal = optimal.perMB.map((p) => (p.split ? 1 : 0));
+      const agree = st.split.reduce((a, v, i) => a + (v === st.reveal[i] ? 1 : 0), 0);
+      m.className = 'msg ok';
+      m.textContent = `${fmt(r.bits)} bits at ${r.psnr.toFixed(2)} dB — cheaper and better than `
+        + `split-nothing (${fmt(baseNo.bits)} bits, ${baseNo.psnr.toFixed(2)} dB). The encoder's own `
+        + `rate–distortion choice is now drawn in grey: it splits ${st.reveal.reduce((a, b) => a + b, 0)} `
+        + `macroblocks and you agreed with it on ${agree} of ${n}.`;
+    } else if (st.tries <= 0) {
+      st.reveal = optimal.perMB.map((p) => (p.split ? 1 : 0));
+      m.className = 'msg no';
+      m.textContent = `Out of encodes — level lost. Yours: ${fmt(r.bits)} bits at ${r.psnr.toFixed(2)} dB. `
+        + `Split-nothing: ${fmt(baseNo.bits)} at ${baseNo.psnr.toFixed(2)}. The encoder's answer is now in grey — `
+        + `it splits only where two different motions meet inside one block.`;
+      $('l5-run').disabled = true;
+    } else {
+      m.className = 'msg no';
+      m.textContent = allSplit
+        ? `Splitting everything costs ${fmt(r.bits)} bits (${fmt(r.mvBits)} of them just vectors) at `
+          + `${r.psnr.toFixed(2)} dB, against ${fmt(baseNo.bits)} at ${baseNo.psnr.toFixed(2)} for splitting nothing. `
+          + `Four vectors describing one motion is three wasted vectors.`
+        : `${fmt(r.bits)} bits at ${r.psnr.toFixed(2)} dB. Target: under ${fmt(baseNo.bits)} bits `
+          + `AND over ${baseNo.psnr.toFixed(2)} dB. Look for blocks where an object edge crosses the square.`;
+    }
+    draw();
+  });
+
+  draw();
+  $('l5-msg').className = 'msg';
+  $('l5-msg').textContent = `Baseline — split nothing: ${fmt(baseNo.bits)} bits at ${baseNo.psnr.toFixed(2)} dB. Beat both numbers at once.`;
+})();
+
+/* ========================================================================== */
+/* LEVEL 6 — J = D + lambda R                                                 */
+/* ========================================================================== */
+(function level6() {
+  const FRAME = 3, TGT_BITS = 2800, TGT_PSNR = 38.0;
+  const src = SHOT[FRAME], ref = chain[FRAME - 1];
+  const st = { tries: 5, done: false, points: [] };
+  const lamMult = (v) => Math.pow(2, v / 4);
+
+  function drawRD() {
+    const g = clearLayer('l6-rd-layer');
+    const X0 = 52, Y0 = 212, X1 = 400, Y1 = 22;
+    const bMin = 400, bMax = 6000, pMin = 31, pMax = 42;
+    const sx = (b) => X0 + ((b - bMin) / (bMax - bMin)) * (X1 - X0);
+    const sy = (p) => Y0 + ((p - pMin) / (pMax - pMin)) * (Y1 - Y0);
+    const F = { 'font-size': 10, fill: '#6a6a5e', 'font-family': 'ui-sans-serif,system-ui,sans-serif' };
+
+    // target box, drawn first so points land on top
+    g.appendChild(svgEl('rect', {
+      x: sx(bMin), y: sy(pMax), width: sx(TGT_BITS) - sx(bMin), height: sy(TGT_PSNR) - sy(pMax),
+      fill: 'rgba(47,122,82,.12)', stroke: '#2f7a52', 'stroke-dasharray': '4 3',
+    }));
+    g.appendChild(svgEl('text', { ...F, x: sx(bMin) + 6, y: sy(pMax) + 14, fill: '#2f7a52' }, 'target'));
+
+    g.appendChild(svgEl('line', { x1: X0, y1: Y0, x2: X1, y2: Y0, stroke: '#bbb' }));
+    g.appendChild(svgEl('line', { x1: X0, y1: Y0, x2: X0, y2: Y1, stroke: '#bbb' }));
+    for (let b = 1000; b <= 6000; b += 1000) {
+      g.appendChild(svgEl('line', { x1: sx(b), y1: Y0, x2: sx(b), y2: Y0 + 4, stroke: '#bbb' }));
+      g.appendChild(svgEl('text', { ...F, x: sx(b), y: Y0 + 16, 'text-anchor': 'middle' }, String(b / 1000) + 'k'));
+    }
+    for (let p = 32; p <= 42; p += 2) {
+      g.appendChild(svgEl('line', { x1: X0 - 4, y1: sy(p), x2: X0, y2: sy(p), stroke: '#bbb' }));
+      g.appendChild(svgEl('text', { ...F, x: X0 - 8, y: sy(p) + 3, 'text-anchor': 'end' }, String(p)));
+    }
+    g.appendChild(svgEl('text', { ...F, x: (X0 + X1) / 2, y: Y0 + 32, 'text-anchor': 'middle' }, 'bits spent (R)'));
+    g.appendChild(svgEl('text', { ...F, x: 14, y: (Y0 + Y1) / 2, 'text-anchor': 'middle', transform: `rotate(-90 14 ${(Y0 + Y1) / 2})` }, 'quality, dB (lower D)'));
+
+    st.points.forEach((pt, i) => {
+      const last = i === st.points.length - 1;
+      g.appendChild(svgEl('circle', {
+        cx: sx(Math.min(bMax, pt.bits)), cy: sy(Math.max(pMin, Math.min(pMax, pt.psnr))),
+        r: last ? 5 : 3.2, fill: last ? 'var(--lever)' : 'rgba(47,111,159,.4)',
+      }));
+      if (last) g.appendChild(svgEl('text', {
+        ...F, x: sx(Math.min(bMax, pt.bits)) + 9, y: sy(pt.psnr) + 3, fill: 'var(--lever)',
+      }, `QP ${pt.qp}, λ×${pt.mult.toFixed(2)}`));
+    });
+  }
+
+  function render() {
+    $('l6-qp-val').textContent = $('l6-qp').value;
+    $('l6-lam-val').textContent = lamMult(+$('l6-lam').value).toFixed(2);
+    $('l6-tries').textContent = st.tries;
+    drawRD();
+  }
+
+  $('l6-qp').addEventListener('input', render);
+  $('l6-lam').addEventListener('input', render);
+
+  $('l6-run').addEventListener('click', () => {
+    if (st.done || st.tries <= 0) return;
+    st.tries -= 1;
+    const qp = +$('l6-qp').value, mult = lamMult(+$('l6-lam').value);
+    const r = encodeFrame(src, [ref], { qp, type: 'P', lambda: lambdaFor(qp) * mult });
+    st.points.push({ bits: r.bits, psnr: r.psnr, qp, mult });
+    putGray($('l6-rec'), r.recon);
+    const mix = {};
+    r.perMB.forEach((p) => { mix[p.mode] = (mix[p.mode] || 0) + 1; });
+    const top = Object.entries(mix).sort((a, b) => b[1] - a[1])[0];
+    $('l6-bits').textContent = fmt(r.bits);
+    $('l6-psnr').textContent = r.psnr.toFixed(2);
+    $('l6-modes').textContent = `${top[0]} ×${top[1]}`;
+    $('l6-cap').textContent = `QP ${qp}, λ ×${mult.toFixed(2)}`;
+    const m = $('l6-msg');
+    if (r.bits <= TGT_BITS && r.psnr >= TGT_PSNR) {
+      st.done = true; m.className = 'msg ok';
+      m.textContent = `Inside the box: ${fmt(r.bits)} bits at ${r.psnr.toFixed(2)} dB. `
+        + `QP set how much precision you were willing to destroy; λ set how hard the encoder `
+        + `argued about spending bits at all. Two dials, one objective function.`;
+      $('l6-run').disabled = true;
+    } else if (st.tries <= 0) {
+      m.className = 'msg no';
+      m.textContent = `Out of encodes — level lost. Your curve is still on the plot: every point `
+        + `you made is a real operating point of this encoder, and the frontier they trace is `
+        + `the rate–distortion curve.`;
+      $('l6-run').disabled = true;
+    } else {
+      m.className = 'msg no';
+      m.textContent = r.bits > TGT_BITS
+        ? `${fmt(r.bits)} bits — ${fmt(r.bits - TGT_BITS)} too many, at ${r.psnr.toFixed(2)} dB. `
+          + `You can buy that back with QP, with λ, or with both; they do different things.`
+        : `${r.psnr.toFixed(2)} dB — under the floor, at ${fmt(r.bits)} bits. You have bits to spare.`;
+    }
+    render();
+  });
+
+  predictHook('l6-predict', 'c', {
+    a: 'Intra is the most expensive mode there is — raising the price of bits is the last thing '
+      + 'that would make an encoder choose it.',
+    b: 'Splitting buys accuracy with four vectors. When bits are expensive, accuracy is the first '
+      + 'thing to go.',
+    c: 'Skip, which sends no residual and no new vector at all: "the previous frame, shifted; nothing '
+      + 'to add". At twenty times the textbook λ, most of this frame becomes Skip and the picture '
+      + 'visibly stops updating. That is what a starved encoder looks like.',
+  });
+
+  render();
+})();
+
+/* ========================================================================== */
+/* LEVEL 7 — ship the shot                                                    */
+/* ========================================================================== */
+(function level7() {
+  const RATE = 3200, BUF0 = 10000, BUFMAX = 13000;
+  const PSNR_FLOOR = 34, MAX_STRIKES = 2, AVG_TARGET = 36.6;
+  const st = {};
+
+  function reset() {
+    Object.assign(st, {
+      t: 0, buffer: BUF0, prev: null, next: null, strikes: 0, total: 0,
+      delay: 3, over: false, history: [], guess: null,
+    });
+    $('l7-send').disabled = false;
+    $('l7-type').disabled = false;
+    $('l7-qp').disabled = false;
+    const p = $('l7-predict');
+    p.dataset.done = '0';
+    p.querySelectorAll('.opts button').forEach((b) => { b.disabled = false; b.setAttribute('aria-pressed', 'false'); });
+    p.querySelector('.verdict').textContent = 'A correct call earns you 600 bits of buffer. A wrong one costs nothing but the information.';
+    p.querySelector('.verdict').style.color = '';
+    $('l7-msg').className = 'msg';
+    $('l7-msg').textContent = 'Frame 0 has nothing behind it, so it has to be an I frame — and an '
+      + 'I frame at a low QP can empty the buffer on its own before the shot has started.';
+    render();
+  }
+
+  function timeline() {
+    const g = clearLayer('l7-tl-layer');
+    const X0 = 40, X1 = 640, Y0 = 130, YT = 26;
+    const colW = (X1 - X0) / N_FRAMES;
+    const maxBits = Math.max(11000, ...st.history.map((h) => h.bits));
+    const F = { 'font-size': 9, fill: '#6a6a5e', 'font-family': 'ui-sans-serif,system-ui,sans-serif' };
+    g.appendChild(svgEl('line', { x1: X0, y1: Y0, x2: X1, y2: Y0, stroke: '#bbb' }));
+    g.appendChild(svgEl('text', { ...F, x: X0, y: 16 }, 'bits per frame'));
+
+    st.history.forEach((h) => {
+      const x = X0 + h.t * colW;
+      const hh = ((h.bits / maxBits) * (Y0 - YT));
+      g.appendChild(svgEl('rect', { x: x + 1, y: Y0 - hh, width: colW - 2, height: hh, fill: 'var(--bits)', opacity: 0.85 }));
+      g.appendChild(svgEl('text', { ...F, x: x + colW / 2, y: Y0 + 11, 'text-anchor': 'middle', fill: '#444' }, h.type));
+    });
+    if (!st.over && st.t < N_FRAMES) {
+      g.appendChild(svgEl('rect', { x: X0 + st.t * colW + 1, y: YT, width: colW - 2, height: Y0 - YT, fill: 'rgba(47,111,159,.13)' }));
+      g.appendChild(svgEl('text', { ...F, x: X0 + st.t * colW + colW / 2, y: Y0 + 11, 'text-anchor': 'middle', fill: 'var(--lever)' }, 'now'));
+    }
+
+    // buffer trace
+    const BY0 = 182, BY1 = 142;
+    g.appendChild(svgEl('line', { x1: X0, y1: BY0, x2: X1, y2: BY0, stroke: 'var(--bad)', 'stroke-dasharray': '3 3' }));
+    g.appendChild(svgEl('text', { ...F, x: 2, y: BY0 + 4, fill: 'var(--bad)' }, 'stall'));
+    g.appendChild(svgEl('text', { ...F, x: 2, y: BY1 + 4 }, 'full'));
+    const by = (b) => BY0 + (Math.max(0, Math.min(BUFMAX, b)) / BUFMAX) * (BY1 - BY0);
+    let d = `M ${X0} ${by(BUF0)}`;
+    st.history.forEach((h) => { d += ` L ${X0 + (h.t + 1) * colW} ${by(h.buffer)}`; });
+    g.appendChild(svgEl('path', { d, fill: 'none', stroke: 'var(--quality)', 'stroke-width': 2 }));
+  }
+
+  function render() {
+    $('l7-t').textContent = st.t < N_FRAMES ? st.t : N_FRAMES - 1;
+    putGray($('l7-src'), SHOT[Math.min(st.t, N_FRAMES - 1)]);
+    putGray($('l7-rec'), st.prev || SHOT[0]);
+    $('l7-buf').textContent = fmt(Math.round(st.buffer));
+    $('l7-strikes').textContent = `${st.strikes}/${MAX_STRIKES}`;
+    $('l7-delay').textContent = st.delay;
+    $('l7-avg').textContent = st.history.length
+      ? (st.history.reduce((a, h) => a + h.psnr, 0) / st.history.length).toFixed(2) : '—';
+    $('l7-qp-val').textContent = $('l7-qp').value;
+    const last = st.history[st.history.length - 1];
+    $('l7-last').textContent = last ? fmt(last.bits) : '—';
+    $('l7-lastq').textContent = last ? last.psnr.toFixed(1) : '—';
+    $('l7-buf').parentElement.className = st.buffer < 3000 ? 'ro fail' : 'ro';
+    timeline();
+  }
+
+  function bucket(bits) { return bits < 2500 ? 'cheap' : bits <= 6000 ? 'mid' : 'dear'; }
+
+  function finish(won, why) {
+    st.over = true;
+    $('l7-send').disabled = true;
+    $('l7-type').disabled = true;
+    $('l7-qp').disabled = true;
+    const avg = st.history.reduce((a, h) => a + h.psnr, 0) / Math.max(1, st.history.length);
+    const iCount = st.history.filter((h) => h.type === 'I').length;
+    const m = $('l7-msg');
+    m.className = won ? 'msg ok' : 'msg no';
+    m.textContent = `${why} ${fmt(st.total)} bits for ${st.history.length} frame`
+      + `${st.history.length === 1 ? '' : 's'} `
+      + `(${iCount} of them coded from scratch), average ${avg.toFixed(2)} dB. `
+      + (won ? 'Read the debrief — then go run ffprobe on something real.'
+        : 'Restart and try again: the shot is identical every time, so what you learned transfers exactly.');
+    render();
+  }
+
+  function sendOne(type, qp, isSecondOfPair) {
+    const t = st.t;
+    const refs = type === 'I' ? null
+      : type === 'B' ? [st.prev, st.next]
+        : [st.prev];
+    const r = encodeFrame(SHOT[t], refs, { qp, type });
+    st.total += r.bits;
+    st.buffer = Math.min(BUFMAX, st.buffer + RATE - r.bits);
+    if (r.psnr < PSNR_FLOOR) st.strikes += 1;
+    st.history.push({ t, type, bits: r.bits, psnr: r.psnr, buffer: st.buffer, qp });
+    if (type !== 'B') st.prev = r.recon;
+    st.t += 1;
+    return r;
+  }
+
+  $('l7-send').addEventListener('click', () => {
+    if (st.over || st.t >= N_FRAMES) return;
+    let type = $('l7-type').value;
+    const qp = +$('l7-qp').value;
+    if (st.t === 0) type = 'I';
+    if (type === 'B' && (st.delay <= 0 || st.t === 0 || st.t >= N_FRAMES - 1)) {
+      $('l7-msg').className = 'msg no';
+      $('l7-msg').textContent = st.delay <= 0
+        ? 'No delay budget left — a B frame needs the next frame coded first, and you have spent all three frames of delay.'
+        : 'A B frame needs a frame on each side; there is none here.';
+      return;
+    }
+
+    let note = '';
+    let r;
+    if (type === 'B') {
+      // Reorder: code the future anchor first, then the B that sits between.
+      // This is exactly why B frames cost latency rather than being free.
+      st.delay -= 1;
+      const futureT = st.t + 1;
+      const fr = encodeFrame(SHOT[futureT], [st.prev], { qp, type: 'P' });
+      st.next = fr.recon;
+      r = sendOne('B', qp);
+      // now commit the anchor we already coded, in its own frame slot
+      st.total += fr.bits;
+      st.buffer = Math.min(BUFMAX, st.buffer + RATE - fr.bits);
+      if (fr.psnr < PSNR_FLOOR) st.strikes += 1;
+      st.history.push({ t: futureT, type: 'P', bits: fr.bits, psnr: fr.psnr, buffer: st.buffer, qp });
+      st.prev = fr.recon;
+      st.t = futureT + 1;
+      note = ` Two frames went out: the B (${fmt(r.bits)} bits) and the P anchor it needed (${fmt(fr.bits)}).`;
+    } else {
+      r = sendOne(type, qp);
+    }
+
+    // Score the prediction, then re-arm it for the next frame.
+    const p = $('l7-predict');
+    if (st.guess) {
+      const truth = bucket(r.bits);
+      const right = st.guess === truth;
+      if (right) st.buffer = Math.min(BUFMAX, st.buffer + 600);
+      const v = p.querySelector('.verdict');
+      v.textContent = right
+        ? `Called it — ${fmt(r.bits)} bits. +600 buffer.`
+        : `It came in at ${fmt(r.bits)} bits. You said ${st.guess === 'cheap' ? 'cheap' : st.guess === 'mid' ? 'normal' : 'expensive'}.`;
+      v.style.color = right ? 'var(--quality)' : 'var(--bad)';
+      st.guess = null;
+    }
+    p.dataset.done = '0';
+    p.querySelectorAll('.opts button').forEach((b) => { b.disabled = false; b.setAttribute('aria-pressed', 'false'); });
+
+    const m = $('l7-msg');
+    if (st.buffer <= 0) { render(); finish(false, 'The buffer hit zero — playback stalled.'); return; }
+    if (st.strikes >= MAX_STRIKES) { render(); finish(false, `${MAX_STRIKES} frames fell below ${PSNR_FLOOR} dB — visibly broken.`); return; }
+    if (st.t >= N_FRAMES) {
+      render();
+      const avg = st.history.reduce((a, h) => a + h.psnr, 0) / st.history.length;
+      finish(avg >= AVG_TARGET, avg >= AVG_TARGET
+        ? 'Shot delivered, buffer intact, quality held.'
+        : `Shot delivered without a stall, but the average came in at ${avg.toFixed(2)} dB, `
+          + `under the ${AVG_TARGET} dB the brief asked for. Surviving the channel is not the `
+          + `same as using it.`);
+      return;
+    }
+    m.className = 'msg';
+    m.textContent = `Frame ${st.t - 1} cost ${fmt(r.bits)} bits at ${r.psnr.toFixed(1)} dB; `
+      + `buffer ${st.buffer > 0 ? 'at ' + fmt(Math.round(st.buffer)) : 'empty'}.` + note;
+    render();
+  });
+
+  $('l7-qp').addEventListener('input', render);
+  $('l7-type').addEventListener('change', render);
+  $('l7-restart').addEventListener('click', reset);
+
+  // The per-frame prediction beat re-arms every frame, so it is a habit, not a quiz.
+  $('l7-predict').querySelectorAll('.opts button').forEach((b) => {
+    b.addEventListener('click', () => {
+      if ($('l7-predict').dataset.done === '1' || st.over) return;
+      $('l7-predict').dataset.done = '1';
+      st.guess = b.dataset.v;
+      $('l7-predict').querySelectorAll('.opts button').forEach((x) => {
+        x.setAttribute('aria-pressed', String(x === b)); x.disabled = true;
+      });
+      const v = $('l7-predict').querySelector('.verdict');
+      v.textContent = 'Locked. Send the frame.';
+      v.style.color = '';
+    });
+  });
+
+  reset();
+})();
+
+</script>
+</body>
+</html>
